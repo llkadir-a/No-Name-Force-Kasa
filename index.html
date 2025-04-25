@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Takım Kasası</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background-color: #111;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    
+    header {
+      padding: 20px;
+    }
+
+    header img {
+      width: 200px;
+      height: auto;
+    }
+
+    .balance {
+      font-size: 3em;
+      font-weight: bold;
+      margin: 20px 0;
+      color: #00ff88;
+    }
+
+    .transactions {
+      width: 90%;
+      max-width: 600px;
+      display: flex;
+      flex-direction: column-reverse;
+      gap: 10px;
+      margin-bottom: 50px;
+    }
+
+    .transaction {
+      background-color: #222;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .transaction.income {
+      border-left: 5px solid #00ff88;
+    }
+
+    .transaction.expense {
+      border-left: 5px solid #ff4444;
+    }
+
+    @media (max-width: 600px) {
+      .balance {
+        font-size: 2em;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="f (1).png" alt="Takım Logosu" />
+  </header>
+
+  <div class="balance">Toplam Kasa: 4.250₺</div>
+
+  <div class="transactions">
+    <div class="transaction income">
+      <span>Turnuva Ödülü</span>
+      <span>+1500₺</span>
+    </div>
+    <div class="transaction expense">
+      <span>Forma Baskı</span>
+      <span>-250₺</span>
+    </div>
+    <div class="transaction income">
+      <span>Bağış</span>
+      <span>+500₺</span>
+    </div>
+    <div class="transaction expense">
+      <span>Discord Nitro</span>
+      <span>-100₺</span>
+    </div>
+    <div class="transaction income">
+      <span>Etkinlik Girişi</span>
+      <span>+2600₺</span>
+    </div>
+  </div>
+</body>
+</html>
