@@ -7,7 +7,13 @@ WhatsApp bot — `!` prefix komutlarla yönetilir. Bot numarası otomatik admind
 | Komut | Açıklama |
 |-------|----------|
 | `!yardim` | Ana menü |
-| `!otox (metin)` | Otomatik grup yayını başlat |
+| `!otox (metin)` | Yayın başlat (onay ister) |
+| `!onay` / `!iptal` | Onay sistemi |
+| `!zaman-otox 22:00-01:00` | Zamanlı yayın penceresi |
+| `!zaman-dm 22:00-01:00` | Zamanlı DM penceresi |
+| `!metin (yazı)` | Zamanlı akışta metin gir |
+| `!log-grup (id)` | Log grubu ayarla |
+| `!rapor` | Günlük rapor |
 | `!durdur` | Yayını durdur |
 | `!durum` | Yayın statusu |
 | `!sure 3` | Yayın aralığı (dakika) |

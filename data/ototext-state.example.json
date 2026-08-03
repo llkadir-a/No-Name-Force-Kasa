@@ -9,7 +9,9 @@
     "sent": 0,
     "lastSendAt": 0,
     "startedAt": 0,
-    "cycle": 0
+    "cycle": 0,
+    "windowStart": "",
+    "windowEnd": ""
   },
   "dm": {
     "running": false,
@@ -21,7 +23,9 @@
     "sent": 0,
     "failed": 0,
     "lastSendAt": 0,
-    "startedAt": 0
+    "startedAt": 0,
+    "windowStart": "",
+    "windowEnd": ""
   },
   "mining": {
     "running": false,
@@ -51,5 +55,16 @@
   "mainPrefix": "!",
   "prefixes": [
     "!"
-  ]
+  ],
+  "logGroupId": "",
+  "pending": null,
+  "daily": {
+    "dayKey": "",
+    "broadcastSent": 0,
+    "dmSent": 0,
+    "errors": 0,
+    "starts": 0,
+    "stops": 0,
+    "events": []
+  }
 }

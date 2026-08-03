@@ -35,12 +35,15 @@ function defaultState() {
     botWid: '',
     mainPrefix: main,
     prefixes: [main],
-    broadcast: { running: false, text: '', intervalMin: 3, index: 0, sent: 0, lastSendAt: 0, startedAt: 0, cycle: 0 },
-    dm: { running: false, text: '', groupId: '', intervalMin: 3, queue: [], index: 0, sent: 0, failed: 0, lastSendAt: 0, startedAt: 0 },
+    broadcast: { running: false, text: '', intervalMin: 3, index: 0, sent: 0, lastSendAt: 0, startedAt: 0, cycle: 0, windowStart: '', windowEnd: '' },
+    dm: { running: false, text: '', groupId: '', intervalMin: 3, queue: [], index: 0, sent: 0, failed: 0, lastSendAt: 0, startedAt: 0, windowStart: '', windowEnd: '' },
     mining: { running: false, targetGroupId: '', targetName: '', members: 0, addedToday: 0, pending: 0, totalTarget: 0, durationMin: 0, startedAt: 0, lastAddAt: 0, dayKey: '' },
     filters: { minUye: 0 },
     blacklist: [],
     invites: [],
+    logGroupId: '',
+    pending: null,
+    daily: { dayKey: '', broadcastSent: 0, dmSent: 0, errors: 0, starts: 0, stops: 0, events: [] },
     stats: { commands: 0, broadcastSent: 0, dmSent: 0, joins: 0, startedAt: Date.now() },
   };
 }
@@ -62,6 +65,13 @@ function ensureState() {
   if (!s.prefixes.length) s.prefixes = [s.mainPrefix];
   if (!s.prefixes.includes(s.mainPrefix)) s.prefixes.unshift(s.mainPrefix);
   s.prefixes = [...new Set(s.prefixes)];
+  s.logGroupId = s.logGroupId || '';
+  s.pending = s.pending || null;
+  s.daily = Object.assign({ dayKey: '', broadcastSent: 0, dmSent: 0, errors: 0, starts: 0, stops: 0, events: [] }, s.daily || {});
+  s.broadcast.windowStart = s.broadcast.windowStart || '';
+  s.broadcast.windowEnd = s.broadcast.windowEnd || '';
+  s.dm.windowStart = s.dm.windowStart || '';
+  s.dm.windowEnd = s.dm.windowEnd || '';
   return s;
 }
 
@@ -79,6 +89,82 @@ function matchPrefix(text, prefixes) {
     if (text.startsWith(px)) return px;
   }
   return null;
+}
+
+
+function dayKeyTR() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
+function ensureDaily(state) {
+  const key = dayKeyTR();
+  if (!state.daily || state.daily.dayKey !== key) {
+    state.daily = { dayKey: key, broadcastSent: 0, dmSent: 0, errors: 0, starts: 0, stops: 0, events: [] };
+  }
+  return state.daily;
+}
+
+function parseWindow(args) {
+  const m = String(args || '').trim().match(/^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})$/);
+  if (!m) return null;
+  const norm = (x) => {
+    const [h, mi] = x.split(':').map((n) => parseInt(n, 10));
+    if (!Number.isFinite(h) || !Number.isFinite(mi) || h > 23 || mi > 59) return null;
+    return String(h).padStart(2, '0') + ':' + String(mi).padStart(2, '0');
+  };
+  const a = norm(m[1]);
+  const b = norm(m[2]);
+  if (!a || !b) return null;
+  return { start: a, end: b };
+}
+
+function inTimeWindow(startHHMM, endHHMM) {
+  if (!startHHMM || !endHHMM) return true;
+  const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit', hour12: false });
+  const parts = fmt.formatToParts(new Date());
+  const hh = parseInt(parts.find((p) => p.type === 'hour').value, 10);
+  const mm = parseInt(parts.find((p) => p.type === 'minute').value, 10);
+  const cur = hh * 60 + mm;
+  const [sh, sm] = startHHMM.split(':').map(Number);
+  const [eh, em] = endHHMM.split(':').map(Number);
+  const start = sh * 60 + sm;
+  const end = eh * 60 + em;
+  if (start <= end) return cur >= start && cur <= end;
+  return cur >= start || cur <= end;
+}
+
+async function pushLog(state, type, message) {
+  const daily = ensureDaily(state);
+  const row = { t: Date.now(), type, message: String(message || '').slice(0, 300) };
+  daily.events.unshift(row);
+  daily.events = daily.events.slice(0, 200);
+  if (type === 'broadcast') daily.broadcastSent += 1;
+  if (type === 'dm') daily.dmSent += 1;
+  if (type === 'error') daily.errors += 1;
+  if (type === 'start') daily.starts += 1;
+  if (type === 'stop') daily.stops += 1;
+  if (state.logGroupId) {
+    try {
+      await api.call(this, 'POST', 'sendMessage', {
+        chatId: state.logGroupId,
+        message: `🧾 *LOG* [${type}]\\n${message}`,
+      });
+    } catch (e) {}
+  }
+}
+
+function setPending(state, pending) {
+  state.pending = Object.assign({ expiresAt: Date.now() + 10 * 60 * 1000 }, pending);
+}
+
+function clearPending(state) { state.pending = null; }
+
+function pendingValid(state, sender) {
+  const p = state.pending;
+  if (!p) return false;
+  if (p.expiresAt && Date.now() > p.expiresAt) { clearPending(state); return false; }
+  if (p.by && normId(p.by) !== normId(sender)) return false;
+  return true;
 }
 
 function normId(raw) {
@@ -274,36 +360,50 @@ try {
       reply = [
         '*Ototext — Ana Menü*',
         '',
-        `${prefix}otox (metin) — otomatik yayını başlat`,
+        `${prefix}otox (metin) — yayın (onay ister)`,
+        `${prefix}onay / ${prefix}iptal — onay sistemi`,
         `${prefix}durdur / ${prefix}durum / ${prefix}sure N`,
-        `${prefix}dm (metin). (grupId) — gruptakilere DM`,
+        `${prefix}zaman-otox 22:00-01:00 — zamanlı yayın`,
+        `${prefix}zaman-dm 22:00-01:00 — zamanlı DM`,
+        `${prefix}metin (yazı) — beklenen metni gir`,
+        `${prefix}dm (metin). (grupId) — DM (onay ister)`,
         `${prefix}dm-durdur / ${prefix}dm-sure / ${prefix}dm-durum`,
-        `${prefix}gruplar [sayfa] — 10’ar grup`,
-        `${prefix}davetler — gelen davet linkleri`,
-        `${prefix}filtre / ${prefix}min-uye N / ${prefix}temizlik`,
-        `${prefix}black — kara liste menüsü`,
-        `${prefix}mining — üye ekleme menüsü`,
-        `${prefix}katil (link) / ${prefix}tumkatil (link...)`,
-        `${prefix}karakter ayarla (isim)`,
-        `${prefix}admin — admin menüsü`,
-        `${prefix}prefix — prefix menüsü`,
-        `${prefix}istatistik`,
+        `${prefix}log-grup (id) — log grubu`,
+        `${prefix}rapor — günlük rapor`,
+        `${prefix}gruplar [sayfa]`,
+        `${prefix}davetler / ${prefix}filtre / ${prefix}black / ${prefix}mining`,
+        `${prefix}katil / ${prefix}tumkatil / ${prefix}karakter ayarla`,
+        `${prefix}admin / ${prefix}prefix / ${prefix}istatistik`,
       ].join('\n');
       break;
     }
     case 'otox': {
       if (!args) { reply = `Kullanım: ${prefix}otox (metin)`; break; }
-      state.broadcast.running = true;
-      state.broadcast.text = args;
-      state.broadcast.index = 0;
-      state.broadcast.sent = 0;
-      state.broadcast.startedAt = Date.now();
-      state.broadcast.lastSendAt = 0;
-      reply = `▶️ Otomatik yayın başladı.\nSüre: ${state.broadcast.intervalMin} dk\nMetin: ${args.slice(0, 120)}`;
+      setPending(state, {
+        type: 'confirm_otox',
+        by: sender,
+        chatId,
+        data: {
+          text: args,
+          windowStart: state.broadcast.windowStart || '',
+          windowEnd: state.broadcast.windowEnd || '',
+        },
+      });
+      const w = state.pending.data;
+      reply = [
+        '❓ *Yayın onayı*',
+        `Metin: ${args.slice(0, 160)}`,
+        `Aralık: ${state.broadcast.intervalMin} dk`,
+        `Pencere: ${w.windowStart && w.windowEnd ? (w.windowStart + '-' + w.windowEnd) : 'sürekli'}`,
+        '',
+        `Onayla: ${prefix}onay`,
+        `İptal: ${prefix}iptal`,
+      ].join('\n');
       break;
     }
     case 'durdur': {
       state.broadcast.running = false;
+      await pushLog.call(this, state, 'stop', `OTOX durduruldu | gönderilen ${state.broadcast.sent}`);
       reply = `⏹ Yayın durduruldu.\nGönderilen: ${state.broadcast.sent}`;
       break;
     }
@@ -316,6 +416,7 @@ try {
         `Gönderilen: ${b.sent}`,
         `Index: ${b.index}`,
         `Metin: ${(b.text || '-').slice(0, 160)}`,
+        `Pencere: ${(b.windowStart && b.windowEnd) ? (b.windowStart + '-' + b.windowEnd) : 'sürekli'}`,
         `Min üye filtresi: ${state.filters.minUye || 0}`,
         `Blacklist: ${state.blacklist.length}`,
       ].join('\n');
@@ -334,27 +435,32 @@ try {
         reply = `Kullanım: ${prefix}dm (metin). (grupId)\nÖrnek: ${prefix}dm Merhaba. 120363xxx@g.us`;
         break;
       }
-      const data = await api.call(this, 'POST', 'getGroupData', { groupId: parsed.groupId });
-      const participants = (data.participants || []).map((p) => p.id).filter(Boolean);
-      const me = state.botWid;
-      const queue = participants.filter((id) => id !== me && String(id).endsWith('@c.us'));
-      state.dm = {
-        running: true,
-        text: parsed.text,
-        groupId: parsed.groupId,
-        intervalMin: state.dm.intervalMin || 3,
-        queue,
-        index: 0,
-        sent: 0,
-        failed: 0,
-        lastSendAt: 0,
-        startedAt: Date.now(),
-      };
-      reply = `✉️ DM başladı.\nGrup: ${data.subject || parsed.groupId}\nKuyruk: ${queue.length}\nAralık: ${state.dm.intervalMin} dk`;
+      setPending(state, {
+        type: 'confirm_dm',
+        by: sender,
+        chatId,
+        data: {
+          text: parsed.text,
+          groupId: parsed.groupId,
+          windowStart: state.dm.windowStart || '',
+          windowEnd: state.dm.windowEnd || '',
+        },
+      });
+      reply = [
+        '❓ *DM onayı*',
+        `Grup: ${parsed.groupId}`,
+        `Metin: ${parsed.text.slice(0, 160)}`,
+        `Aralık: ${state.dm.intervalMin} dk`,
+        `Pencere: ${(state.dm.windowStart && state.dm.windowEnd) ? (state.dm.windowStart + '-' + state.dm.windowEnd) : 'sürekli'}`,
+        '',
+        `Onayla: ${prefix}onay`,
+        `İptal: ${prefix}iptal`,
+      ].join('\n');
       break;
     }
     case 'dm-durdur': {
       state.dm.running = false;
+      await pushLog.call(this, state, 'stop', `DM durduruldu | sent ${state.dm.sent} fail ${state.dm.failed}`);
       reply = `⏹ DM durduruldu.\nGönderilen: ${state.dm.sent}/${(state.dm.queue || []).length}\nHata: ${state.dm.failed}`;
       break;
     }
@@ -610,6 +716,143 @@ try {
       break;
     }
 
+
+    case 'onay':
+    case 'evet': {
+      if (!pendingValid(state, sender)) { reply = '⏳ Onay bekleyen işlem yok / süresi doldu.'; break; }
+      const p = state.pending;
+      if (p.type === 'confirm_otox') {
+        const d = p.data || {};
+        state.broadcast.running = true;
+        state.broadcast.text = d.text || '';
+        state.broadcast.index = 0;
+        state.broadcast.sent = 0;
+        state.broadcast.startedAt = Date.now();
+        state.broadcast.lastSendAt = 0;
+        state.broadcast.windowStart = d.windowStart || state.broadcast.windowStart || '';
+        state.broadcast.windowEnd = d.windowEnd || state.broadcast.windowEnd || '';
+        clearPending(state);
+        await pushLog.call(this, state, 'start', `OTOX başladı | aralık ${state.broadcast.intervalMin}dk | pencere ${state.broadcast.windowStart || '-'}-${state.broadcast.windowEnd || '-'} | ${String(state.broadcast.text).slice(0,80)}`);
+        reply = `▶️ Yayın onaylandı ve başladı.\nAralık: ${state.broadcast.intervalMin} dk\nPencere: ${(state.broadcast.windowStart && state.broadcast.windowEnd) ? (state.broadcast.windowStart + '-' + state.broadcast.windowEnd) : 'sürekli'}`;
+      } else if (p.type === 'confirm_dm') {
+        const d = p.data || {};
+        const data = await api.call(this, 'POST', 'getGroupData', { groupId: d.groupId });
+        const participants = (data.participants || []).map((x) => x.id).filter(Boolean);
+        const me = state.botWid;
+        const queue = participants.filter((id) => id !== me && String(id).endsWith('@c.us'));
+        state.dm.running = true;
+        state.dm.text = d.text || '';
+        state.dm.groupId = d.groupId;
+        state.dm.queue = queue;
+        state.dm.index = 0;
+        state.dm.sent = 0;
+        state.dm.failed = 0;
+        state.dm.lastSendAt = 0;
+        state.dm.startedAt = Date.now();
+        state.dm.windowStart = d.windowStart || state.dm.windowStart || '';
+        state.dm.windowEnd = d.windowEnd || state.dm.windowEnd || '';
+        clearPending(state);
+        await pushLog.call(this, state, 'start', `DM başladı | grup ${d.groupId} | kuyruk ${queue.length}`);
+        reply = `✉️ DM onaylandı.\nGrup: ${data.subject || d.groupId}\nKuyruk: ${queue.length}\nPencere: ${(state.dm.windowStart && state.dm.windowEnd) ? (state.dm.windowStart + '-' + state.dm.windowEnd) : 'sürekli'}`;
+      } else {
+        reply = 'Bu işlem onay ile tamamlanamaz. Önce metin gir.';
+      }
+      break;
+    }
+    case 'iptal':
+    case 'hayir': {
+      if (!state.pending) { reply = 'İptal edilecek işlem yok.'; break; }
+      clearPending(state);
+      reply = '❎ İşlem iptal edildi.';
+      break;
+    }
+    case 'zaman-otox': {
+      const w = parseWindow(args);
+      if (!w) { reply = `Kullanım: ${prefix}zaman-otox 22:00-01:00`; break; }
+      state.broadcast.windowStart = w.start;
+      state.broadcast.windowEnd = w.end;
+      setPending(state, { type: 'await_otox_text', by: sender, chatId, data: { windowStart: w.start, windowEnd: w.end } });
+      reply = `🕒 OTOX zamanı kaydedildi: ${w.start}-${w.end}\nŞimdi metni gir:\n${prefix}metin (yazın)\nSonra ${prefix}onay ile başlar.`;
+      break;
+    }
+    case 'zaman-dm': {
+      const w = parseWindow(args);
+      if (!w) { reply = `Kullanım: ${prefix}zaman-dm 22:00-01:00`; break; }
+      state.dm.windowStart = w.start;
+      state.dm.windowEnd = w.end;
+      setPending(state, { type: 'await_dm_group', by: sender, chatId, data: { windowStart: w.start, windowEnd: w.end } });
+      reply = `🕒 DM zamanı kaydedildi: ${w.start}-${w.end}\nŞimdi grup id gir:\n${prefix}dmgrup 120363...@g.us\nSonra ${prefix}metin (yazı) ve ${prefix}onay`;
+      break;
+    }
+    case 'dmgrup': {
+      if (!pendingValid(state, sender) || state.pending.type !== 'await_dm_group') {
+        reply = `Önce ${prefix}zaman-dm 22:00-01:00 yaz.`;
+        break;
+      }
+      const gid = (args || '').trim().replace(/[()]/g, '');
+      if (!gid.endsWith('@g.us')) { reply = `Kullanım: ${prefix}dmgrup 120363...@g.us`; break; }
+      const data = state.pending.data || {};
+      setPending(state, { type: 'await_dm_text', by: sender, chatId, data: { ...data, groupId: gid } });
+      reply = `✅ DM grup: ${gid}\nŞimdi metni gir:\n${prefix}metin (yazın)`;
+      break;
+    }
+    case 'metin': {
+      if (!args) { reply = `Kullanım: ${prefix}metin (yazı)`; break; }
+      if (!pendingValid(state, sender)) { reply = 'Bekleyen metin adımı yok. Önce zaman-otox / zaman-dm veya işlem başlat.'; break; }
+      const p = state.pending;
+      if (p.type === 'await_otox_text') {
+        setPending(state, {
+          type: 'confirm_otox',
+          by: sender,
+          chatId,
+          data: { text: args, windowStart: p.data?.windowStart || '', windowEnd: p.data?.windowEnd || '' },
+        });
+        reply = `❓ OTOX metni alındı.\n${args.slice(0,160)}\nPencere: ${p.data?.windowStart}-${p.data?.windowEnd}\n${prefix}onay / ${prefix}iptal`;
+      } else if (p.type === 'await_dm_text') {
+        setPending(state, {
+          type: 'confirm_dm',
+          by: sender,
+          chatId,
+          data: { text: args, groupId: p.data?.groupId, windowStart: p.data?.windowStart || '', windowEnd: p.data?.windowEnd || '' },
+        });
+        reply = `❓ DM metni alındı.\nGrup: ${p.data?.groupId}\n${args.slice(0,160)}\n${prefix}onay / ${prefix}iptal`;
+      } else {
+        reply = 'Şu an metin beklenmiyor.';
+      }
+      break;
+    }
+    case 'log-grup': {
+      const id = (args || '').trim().replace(/[()]/g, '');
+      if (!id.endsWith('@g.us')) { reply = `Kullanım: ${prefix}log-grup 120363...@g.us`; break; }
+      state.logGroupId = id;
+      await pushLog.call(this, state, 'info', `Log grubu ayarlandı: ${id}`);
+      reply = `✅ Log grubu:\n${id}\nArtık olaylar buraya düşer.`;
+      break;
+    }
+    case 'rapor': {
+      const daily = ensureDaily(state);
+      const lines = [
+        `📊 *Günlük Rapor* (${daily.dayKey})`,
+        `Yayın mesajı: ${daily.broadcastSent}`,
+        `DM: ${daily.dmSent}`,
+        `Başlatma: ${daily.starts}`,
+        `Durdurma: ${daily.stops}`,
+        `Hata: ${daily.errors}`,
+        `Log grup: ${state.logGroupId || '-'}`,
+        '',
+        '*Son olaylar:*',
+      ];
+      for (const ev of (daily.events || []).slice(0, 15)) {
+        const hh = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ev.t));
+        lines.push(`• ${hh} [${ev.type}] ${ev.message}`);
+      }
+      reply = lines.join('\n');
+      if (state.logGroupId) {
+        try { await api.call(this, 'POST', 'sendMessage', { chatId: state.logGroupId, message: reply }); } catch (e) {}
+      }
+      break;
+    }
+
     case 'prefix': {
       reply = [
         '*🔤 Prefix Menü*',
@@ -721,13 +964,55 @@ async function api(method, endpoint, body) {
   return this.helpers.httpRequest(opts);
 }
 
+function dayKeyTR() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+function ensureDaily(state) {
+  const key = dayKeyTR();
+  if (!state.daily || state.daily.dayKey !== key) {
+    state.daily = { dayKey: key, broadcastSent: 0, dmSent: 0, errors: 0, starts: 0, stops: 0, events: [] };
+  }
+  return state.daily;
+}
+function inTimeWindow(startHHMM, endHHMM) {
+  if (!startHHMM || !endHHMM) return true;
+  const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit', hour12: false });
+  const parts = fmt.formatToParts(new Date());
+  const hh = parseInt(parts.find((p) => p.type === 'hour').value, 10);
+  const mm = parseInt(parts.find((p) => p.type === 'minute').value, 10);
+  const cur = hh * 60 + mm;
+  const [sh, sm] = startHHMM.split(':').map(Number);
+  const [eh, em] = endHHMM.split(':').map(Number);
+  const start = sh * 60 + sm;
+  const end = eh * 60 + em;
+  if (start <= end) return cur >= start && cur <= end;
+  return cur >= start || cur <= end;
+}
+async function pushLog(state, type, message) {
+  const daily = ensureDaily(state);
+  daily.events.unshift({ t: Date.now(), type, message: String(message || '').slice(0, 300) });
+  daily.events = daily.events.slice(0, 200);
+  if (type === 'broadcast') daily.broadcastSent += 1;
+  if (type === 'dm') daily.dmSent += 1;
+  if (type === 'error') daily.errors += 1;
+  if (state.logGroupId) {
+    try {
+      await api.call(this, 'POST', 'sendMessage', { chatId: state.logGroupId, message: `🧾 *LOG* [${type}]\n${message}` });
+    } catch (e) {}
+  }
+}
+
 const state = loadState();
 if (!state) return [];
 const logs = [];
 const now = Date.now();
+ensureDaily(state);
 
 // --- Broadcast worker ---
 if (state.broadcast?.running && state.broadcast.text) {
+  if (!inTimeWindow(state.broadcast.windowStart, state.broadcast.windowEnd)) {
+    logs.push('broadcast: outside time window');
+  } else {
   const intervalMs = Math.max(0.1, Number(state.broadcast.intervalMin) || 3) * 60 * 1000;
   if (now - (state.broadcast.lastSendAt || 0) >= intervalMs) {
     try {
@@ -767,6 +1052,7 @@ if (state.broadcast?.running && state.broadcast.text) {
         state.broadcast.lastSendAt = now;
         state.stats.broadcastSent = (state.stats.broadcastSent || 0) + 1;
         logs.push(`broadcast -> ${target}`);
+        await pushLog.call(this, state, 'broadcast', `grup ${target} | #${state.broadcast.sent}`);
       } else {
         logs.push('broadcast: no eligible groups');
         state.broadcast.lastSendAt = now;
@@ -774,12 +1060,17 @@ if (state.broadcast?.running && state.broadcast.text) {
     } catch (e) {
       logs.push(`broadcast error: ${e.message || e}`);
       state.broadcast.lastSendAt = now;
+      await pushLog.call(this, state, 'error', `broadcast: ${e.message || e}`);
     }
   }
+  } // time window
 }
 
 // --- DM worker ---
 if (state.dm?.running && Array.isArray(state.dm.queue) && state.dm.queue.length) {
+  if (!inTimeWindow(state.dm.windowStart, state.dm.windowEnd)) {
+    logs.push('dm: outside time window');
+  } else {
   const intervalMs = Math.max(0.1, Number(state.dm.intervalMin) || 3) * 60 * 1000;
   if (now - (state.dm.lastSendAt || 0) >= intervalMs) {
     if (state.dm.index >= state.dm.queue.length) {
@@ -792,15 +1083,21 @@ if (state.dm?.running && Array.isArray(state.dm.queue) && state.dm.queue.length)
         state.dm.sent += 1;
         state.stats.dmSent = (state.stats.dmSent || 0) + 1;
         logs.push(`dm -> ${target}`);
+        await pushLog.call(this, state, 'dm', `dm ${target} | #${state.dm.sent}`);
       } catch (e) {
         state.dm.failed += 1;
         logs.push(`dm fail ${target}: ${e.message || e}`);
+        await pushLog.call(this, state, 'error', `dm fail ${target}: ${e.message || e}`);
       }
       state.dm.index += 1;
       state.dm.lastSendAt = now;
-      if (state.dm.index >= state.dm.queue.length) state.dm.running = false;
+      if (state.dm.index >= state.dm.queue.length) {
+        state.dm.running = false;
+        await pushLog.call(this, state, 'stop', `DM bitti | sent ${state.dm.sent} fail ${state.dm.failed}`);
+      }
     }
   }
+  } // dm time window
 }
 
 // --- Mining worker: pull members from recent groups into target ---
