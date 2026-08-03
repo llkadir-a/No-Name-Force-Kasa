@@ -27,6 +27,7 @@ import json, uuid, os
 from pathlib import Path
 root = Path(os.environ["ROOT_DIR"])
 for f in [
+  root / "n8n-workflows/ototext-bot-commands.json",
   root / "n8n-workflows/scenario-1-scheduled-group-broadcast.json",
   root / "n8n-workflows/scenario-2-sync-group-participants.json",
 ]:
@@ -40,6 +41,7 @@ for f in [
   print(f"ensured id for {f.name}: {data['id']}")
 PY
 
+"$N8N_BIN" import:workflow --input="$ROOT_DIR/n8n-workflows/ototext-bot-commands.json"
 "$N8N_BIN" import:workflow --input="$ROOT_DIR/n8n-workflows/scenario-1-scheduled-group-broadcast.json"
 "$N8N_BIN" import:workflow --input="$ROOT_DIR/n8n-workflows/scenario-2-sync-group-participants.json"
 "$N8N_BIN" list:workflow

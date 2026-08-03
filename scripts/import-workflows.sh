@@ -18,6 +18,7 @@ import_one() {
   sudo docker exec -u node "$CONTAINER" n8n import:workflow --input="/workflows/$base"
 }
 
+import_one "$ROOT_DIR/n8n-workflows/ototext-bot-commands.json"
 import_one "$ROOT_DIR/n8n-workflows/scenario-1-scheduled-group-broadcast.json"
 import_one "$ROOT_DIR/n8n-workflows/scenario-2-sync-group-participants.json"
 

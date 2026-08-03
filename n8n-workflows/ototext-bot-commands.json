@@ -1,0 +1,889 @@
+{
+  "name": "Ototext Bot — Prefix Komutlar",
+  "active": false,
+  "id": "7e4cfc9c-fce6-417b-bec1-e938275b944b",
+  "versionId": "03aad10d-221d-422c-bd35-0e42f37c9439",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Ototext WhatsApp Bot\nGreen API webhook → prefix komutlar.\n\n**Prefix:** `$env.BOT_PREFIX` (varsayılan `/`)\n**Adminler:** `$env.BOT_ADMINS` (`905xxxxxxxxx@c.us` virgülle)\n**Gruplar:** `$env.BROADCAST_GROUPS`\n\nKomutlar: `/help` `/ping` `/status` `/id` `/groups` `/broadcast mesaj` `/sync`",
+        "height": 380,
+        "width": 420,
+        "color": 5
+      },
+      "id": "sticky-bot",
+      "name": "Ototext Bot",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ototext-bot",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-bot",
+      "name": "Green API Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        360
+      ],
+      "webhookId": "ototext-bot-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prefix = ($env.BOT_PREFIX || '/').toString();\nconst adminsRaw = ($env.BOT_ADMINS || '').toString();\nconst admins = adminsRaw.split(/[,;\\s]+/).map(s => s.trim()).filter(Boolean);\n\nconst body = $json.body && typeof $json.body === 'object' ? $json.body : $json;\n\nif (body.typeWebhook && body.typeWebhook !== 'incomingMessageReceived') {\n  return [];\n}\n\nconst messageData = body.messageData || {};\nconst typeMessage = messageData.typeMessage || '';\nlet text = '';\nif (typeMessage === 'textMessage') {\n  text = messageData.textMessageData?.textMessage || '';\n} else if (typeMessage === 'extendedTextMessage') {\n  text = messageData.extendedTextMessageData?.text || '';\n} else {\n  return [];\n}\n\ntext = String(text || '').trim();\nif (!text.startsWith(prefix)) {\n  return [];\n}\n\nconst rest = text.slice(prefix.length).trim();\nif (!rest) {\n  return [];\n}\n\nconst parts = rest.split(/\\s+/);\nconst command = (parts[0] || '').toLowerCase();\nconst args = rest.slice(parts[0].length).trim();\n\nconst chatId = body.senderData?.chatId || '';\nconst sender = body.senderData?.sender || chatId;\nconst isAdmin = admins.length === 0 || admins.includes(sender) || admins.includes(chatId);\n\nconst groups = ($env.BROADCAST_GROUPS || '')\n  .toString()\n  .split(/[,;\\s]+/)\n  .map(s => s.trim())\n  .filter(Boolean);\n\nreturn [{\n  json: {\n    command,\n    args,\n    text,\n    prefix,\n    chatId,\n    sender,\n    isAdmin,\n    senderName: body.senderData?.senderName || '',\n    idMessage: body.idMessage || '',\n    groups,\n    instanceId: $env.ID_INSTANCE || '',\n  }\n}];"
+      },
+      "id": "parse-command",
+      "name": "Parse Prefix Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-command",
+              "leftValue": "={{ $json.command }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-command",
+      "name": "Has Command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        500,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-admin",
+              "leftValue": "={{ $json.isAdmin }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-admin",
+      "name": "Is Admin?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        740,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    chatId: $json.chatId,\n    reply: '⛔ Yetkisiz. Bu Ototext komutu sadece admin numaralarına açık.'\n  }\n}];"
+      },
+      "id": "deny-msg",
+      "name": "Unauthorized Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "help",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "c-help"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "help"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "ping",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "c-ping"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ping"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "status",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "c-status"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "status"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "id",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "c-id"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "id"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "groups",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "c-groups"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "groups"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "broadcast",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "c-broadcast"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "broadcast"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "sync",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "c-sync"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "sync"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-cmd",
+      "name": "Route Command",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        980,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $json.prefix || '/';\nconst reply = [\n  '*Ototext Bot*',\n  '',\n  `${p}help — komut listesi`,\n  `${p}ping — bot ayakta mı`,\n  `${p}status — Green API durumu`,\n  `${p}id — chatId / sender`,\n  `${p}groups — kayıtlı broadcast grupları`,\n  `${p}broadcast <mesaj> — gruplara gönder`,\n  `${p}sync — kaynak→hedef katılımcı sync başlat`,\n].join('\\n');\nreturn [{ json: { chatId: $json.chatId, reply } }];"
+      },
+      "id": "cmd-help",
+      "name": "Help Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { chatId: $json.chatId, reply: '🏓 pong — Ototext aktif' } }];"
+      },
+      "id": "cmd-ping",
+      "name": "Ping Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.green-api.com/waInstance{{ $env.ID_INSTANCE }}/getStateInstance/{{ $env.API_TOKEN }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "http-status",
+      "name": "Green API Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        240
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Route Command').item.json;\nconst state = $json.stateInstance || JSON.stringify($json);\nreturn [{\n  json: {\n    chatId: prev.chatId,\n    reply: `📡 Ototext status\\ninstance: ${prev.instanceId}\\nstate: ${state}`\n  }\n}];"
+      },
+      "id": "status-text",
+      "name": "Status Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    chatId: $json.chatId,\n    reply: `🆔 chatId: ${$json.chatId}\\nsender: ${$json.sender}\\nname: ${$json.senderName || '-'}`\n  }\n}];"
+      },
+      "id": "cmd-id",
+      "name": "Id Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const groups = $json.groups || [];\nconst reply = groups.length\n  ? `📋 Broadcast grupları (${groups.length}):\\n` + groups.map((g,i)=>`${i+1}. ${g}`).join('\\n')\n  : '📋 Kayıtlı grup yok. .env içine BROADCAST_GROUPS ekleyin veya mobil kurulum formunu kullanın.';\nreturn [{ json: { chatId: $json.chatId, reply } }];"
+      },
+      "id": "cmd-groups",
+      "name": "Groups Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = ($json.args || '').trim();\nconst groups = $json.groups || [];\nif (!msg) {\n  return [{ json: { chatId: $json.chatId, reply: `Kullanım: ${$json.prefix}broadcast <mesaj>`, skipBroadcast: true } }];\n}\nif (!groups.length) {\n  return [{ json: { chatId: $json.chatId, reply: 'BROADCAST_GROUPS boş. Önce grup ekleyin.', skipBroadcast: true } }];\n}\nreturn groups.map((chatId, index) => ({\n  json: {\n    index: index + 1,\n    total: groups.length,\n    targetChatId: chatId,\n    message: msg,\n    replyChatId: $json.chatId,\n    skipBroadcast: false\n  }\n}));"
+      },
+      "id": "cmd-broadcast",
+      "name": "Broadcast Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "do-bcast",
+              "leftValue": "={{ $json.skipBroadcast }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-skip-bcast",
+      "name": "Skip Broadcast?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1520,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { chatId: $json.chatId || $json.replyChatId, reply: $json.reply } }];"
+      },
+      "id": "bcast-error-text",
+      "name": "Broadcast Error Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-bcast",
+      "name": "Loop Broadcast",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1760,
+        760
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "id": "wait-bcast",
+      "name": "Wait 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        760
+      ],
+      "webhookId": "ototext-bcast-wait"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.green-api.com/waInstance{{ $env.ID_INSTANCE }}/sendMessage/{{ $env.API_TOKEN }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chatId: $json.targetChatId, message: $json.message }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-bcast-send",
+      "name": "Send Broadcast Msg",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        760
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst first = $('Broadcast Prepare').first().json;\nconst total = first.total || items.length;\nreturn [{\n  json: {\n    chatId: first.replyChatId,\n    reply: `✅ Broadcast tamam — ${total} gruba gönderildi.`\n  }\n}];"
+      },
+      "id": "bcast-done",
+      "name": "Broadcast Done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        920
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $env.SOURCE_GROUP_ID || '-';\nconst target = $env.TARGET_GROUP_ID || '-';\nreturn [{\n  json: {\n    chatId: $json.chatId,\n    reply: `🔄 Sync komutu alındı.\\nKaynak: ${source}\\nHedef: ${target}\\n\\nNot: Uzun sync için \"Ototext — Grup Katılımcı Senkronizasyonu\" workflow'unu UI'dan Manual Trigger ile çalıştırın (15 dk rate limit).`,\n    runSync: true,\n    sourceGroupId: source,\n    targetGroupId: target\n  }\n}];"
+      },
+      "id": "cmd-sync",
+      "name": "Sync Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $json.prefix || '/';\nreturn [{\n  json: {\n    chatId: $json.chatId,\n    reply: `❓ Bilinmeyen komut: ${$json.command}\\n${p}help yazarak listeyi görün.`\n  }\n}];"
+      },
+      "id": "cmd-unknown",
+      "name": "Unknown Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.green-api.com/waInstance{{ $env.ID_INSTANCE }}/sendMessage/{{ $env.API_TOKEN }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chatId: $json.chatId, message: $json.reply }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-reply",
+      "name": "Reply sendMessage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2520,
+        360
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Green API Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Prefix Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Prefix Command": {
+      "main": [
+        [
+          {
+            "node": "Has Command?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Command?": {
+      "main": [
+        [
+          {
+            "node": "Is Admin?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Is Admin?": {
+      "main": [
+        [
+          {
+            "node": "Route Command",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unauthorized Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unauthorized Reply": {
+      "main": [
+        [
+          {
+            "node": "Reply sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Command": {
+      "main": [
+        [
+          {
+            "node": "Help Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ping Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Green API Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Id Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groups Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Broadcast Prepare",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sync Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unknown Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Help Text": {
+      "main": [
+        [
+          {
+            "node": "Reply sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ping Text": {
+      "main": [
+        [
+          {
+            "node": "Reply sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Green API Status": {
+      "main": [
+        [
+          {
+            "node": "Status Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Text": {
+      "main": [
+        [
+          {
+            "node": "Reply sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Id Text": {
+      "main": [
+        [
+          {
+            "node": "Reply sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groups Text": {
+      "main": [
+        [
+          {
+            "node": "Reply sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Broadcast Prepare": {
+      "main": [
+        [
+          {
+            "node": "Skip Broadcast?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Broadcast?": {
+      "main": [
+        [
+          {
+            "node": "Broadcast Error Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Broadcast",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Broadcast Error Text": {
+      "main": [
+        [
+          {
+            "node": "Reply sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Broadcast": {
+      "main": [
+        [
+          {
+            "node": "Wait 2s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Broadcast Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 2s": {
+      "main": [
+        [
+          {
+            "node": "Send Broadcast Msg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Broadcast Msg": {
+      "main": [
+        [
+          {
+            "node": "Loop Broadcast",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Broadcast Done": {
+      "main": [
+        [
+          {
+            "node": "Reply sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Text": {
+      "main": [
+        [
+          {
+            "node": "Reply sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unknown Text": {
+      "main": [
+        [
+          {
+            "node": "Reply sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

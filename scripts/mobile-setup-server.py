@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Ototext mobile setup portal.
-Opens on phone via Cloudflare tunnel. Saves credentials, validates Green API,
-restarts n8n, imports & activates workflows.
-"""
+"""Ototext mobile setup portal — WhatsApp bot credentials + webhook."""
 from __future__ import annotations
 
 import json
@@ -13,6 +10,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -29,7 +27,7 @@ HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
-<title>Ototext Kurulum</title>
+<title>Ototext Bot Kurulum</title>
 <style>
   :root { --bg:#0b0f14; --card:#151b24; --text:#e8eef7; --muted:#93a0b4; --acc:#3ddc97; --danger:#ff6b6b; --line:#243041; }
   * { box-sizing: border-box; }
@@ -51,25 +49,27 @@ HTML = """<!DOCTYPE html>
 </head>
 <body>
   <div class="wrap">
-    <h1>Ototext Kurulum</h1>
-    <p>Telefondan tek seferlik form. Kaydedince Ototext kendini ayarlar, Green API’yi doğrular ve workflow’ları aktif eder.</p>
+    <h1>Ototext WhatsApp Bot</h1>
+    <p>Numarana bağlanan bot. Prefix komutlarla yönetilir (örn. <b>/help</b>). Formu doldur, gerisini Ototext yapsın.</p>
     <div class="card">
       <form id="f">
         <label>ID_INSTANCE</label>
-        <input name="ID_INSTANCE" required placeholder="örn. 7103xxxxxx" autocomplete="off"/>
+        <input name="ID_INSTANCE" required placeholder="Green API instance id" autocomplete="off"/>
         <label>API_TOKEN</label>
-        <input name="API_TOKEN" required placeholder="Green API apiTokenInstance" autocomplete="off"/>
-        <label>SOURCE_GROUP_ID (Senaryo 2 kaynak)</label>
+        <input name="API_TOKEN" required placeholder="apiTokenInstance" autocomplete="off"/>
+        <label>Admin WhatsApp no (komut yetkisi)</label>
+        <input name="BOT_ADMINS" required placeholder="905xxxxxxxxx" autocomplete="off"/>
+        <label>Komut prefix</label>
+        <input name="BOT_PREFIX" value="/" placeholder="/"/>
+        <label>Broadcast grupları (satır başına chatId)</label>
+        <textarea name="GROUP_CHAT_IDS" placeholder="120363...@g.us"></textarea>
+        <label>SOURCE_GROUP_ID (sync kaynak)</label>
         <input name="SOURCE_GROUP_ID" placeholder="120363...@g.us"/>
-        <label>TARGET_GROUP_ID (Senaryo 2 hedef)</label>
+        <label>TARGET_GROUP_ID (sync hedef)</label>
         <input name="TARGET_GROUP_ID" placeholder="120363...@g.us"/>
-        <label>Broadcast mesajı (Senaryo 1)</label>
-        <textarea name="BROADCAST_MESSAGE">Merhaba! Green API n8n broadcast mesaji.</textarea>
-        <label>Grup chatId listesi (Satır başına 1 — Senaryo 1)</label>
-        <textarea name="GROUP_CHAT_IDS" placeholder="120363aaa@g.us&#10;120363bbb@g.us"></textarea>
-        <button type="submit" id="btn">Kur ve Aktif Et</button>
+        <button type="submit" id="btn">Botu Kur ve Aktif Et</button>
       </form>
-      <div class="hint">Green API konsolundan Instance ID + Token kopyala. QR ile WhatsApp bağlı olmalı.</div>
+      <div class="hint">Green API’de WhatsApp QR ile bağlı olmalı. Kurulum sonrası bota <b>/help</b> yaz.</div>
       <div id="out" class="status" hidden></div>
     </div>
   </div>
@@ -80,8 +80,7 @@ const btn=document.getElementById('btn');
 f.addEventListener('submit', async (e)=>{
   e.preventDefault();
   btn.disabled=true; out.hidden=false; out.className='status'; out.textContent='Çalışıyor...';
-  const fd=new FormData(f);
-  const body=Object.fromEntries(fd.entries());
+  const body=Object.fromEntries(new FormData(f).entries());
   try{
     const r=await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json();
@@ -111,13 +110,16 @@ def read_env() -> dict[str, str]:
 def write_env(updates: dict[str, str]) -> None:
     data = read_env()
     data.update({k: str(v) for k, v in updates.items() if v is not None})
-    # Keep known order
     keys = [
         "ID_INSTANCE",
         "API_TOKEN",
         "SOURCE_GROUP_ID",
         "TARGET_GROUP_ID",
         "BROADCAST_MESSAGE",
+        "BROADCAST_GROUPS",
+        "BOT_PREFIX",
+        "BOT_ADMINS",
+        "WEBHOOK_PUBLIC_URL",
         "N8N_HOST",
         "N8N_PORT",
         "N8N_PROTOCOL",
@@ -131,8 +133,7 @@ def write_env(updates: dict[str, str]) -> None:
         "N8N_OWNER_FIRST_NAME",
         "N8N_OWNER_LAST_NAME",
     ]
-    lines = []
-    seen = set()
+    lines, seen = [], set()
     for k in keys:
         if k in data:
             lines.append(f"{k}={data[k]}")
@@ -143,17 +144,32 @@ def write_env(updates: dict[str, str]) -> None:
     ENV_PATH.write_text("\n".join(lines) + "\n")
 
 
-def http_json(method: str, url: str, body: dict | None = None, headers: dict | None = None, cookies: str | None = None):
+def normalize_admin(raw: str) -> str:
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    parts = []
+    for piece in re.split(r"[,;\s]+", raw):
+        piece = piece.strip()
+        if not piece:
+            continue
+        if "@" not in piece:
+            digits = re.sub(r"\D", "", piece)
+            if digits.startswith("0") and len(digits) == 11:
+                digits = "90" + digits[1:]
+            piece = f"{digits}@c.us"
+        parts.append(piece)
+    return ",".join(parts)
+
+
+def http_json(method: str, url: str, body: dict | None = None, cookies: str | None = None):
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Content-Type", "application/json")
-    if headers:
-        for k, v in headers.items():
-            req.add_header(k, v)
     if cookies:
         req.add_header("Cookie", cookies)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=45) as resp:
             raw = resp.read().decode()
             set_cookie = resp.headers.get_all("Set-Cookie") or []
             return resp.status, (json.loads(raw) if raw else {}), set_cookie
@@ -177,10 +193,24 @@ def green_api_state(instance: str, token: str) -> tuple[bool, str]:
         return False, str(e)
 
 
+def green_api_set_webhook(instance: str, token: str, webhook_url: str) -> str:
+    url = f"https://api.green-api.com/waInstance{instance}/setSettings/{token}"
+    body = {
+        "webhookUrl": webhook_url,
+        "incomingWebhook": "yes",
+        "outgoingWebhook": "no",
+        "outgoingAPIMessageWebhook": "no",
+        "outgoingMessageWebhook": "no",
+        "stateWebhook": "yes",
+        "deviceWebhook": "no",
+    }
+    code, payload, _ = http_json("POST", url, body)
+    return f"setSettings HTTP {code} {json.dumps(payload)[:300]}"
+
+
 def update_scenario1_groups(chat_ids: list[str], message: str) -> None:
     path = ROOT / "n8n-workflows" / "scenario-1-scheduled-group-broadcast.json"
     data = json.loads(path.read_text())
-    # find code node
     for node in data.get("nodes", []):
         if node.get("name") == "Grup Listesi Oluştur":
             ids_js = ",\n  ".join(json.dumps(x) for x in chat_ids)
@@ -201,6 +231,17 @@ return groupChatIds.map((chatId, index) => ({{
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
+def ensure_n8n_tunnel() -> str:
+    script = ROOT / "scripts" / "ensure-n8n-tunnel.sh"
+    r = subprocess.run(["bash", str(script)], cwd=str(ROOT), capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"tunnel failed: {r.stdout}\\n{r.stderr}")
+    url_file = LOGS / "n8n-public-url.txt"
+    if not url_file.exists():
+        raise RuntimeError("n8n public url missing")
+    return url_file.read_text().strip()
+
+
 def restart_n8n() -> str:
     log: list[str] = []
     env = read_env()
@@ -213,7 +254,7 @@ def restart_n8n() -> str:
             time.sleep(2)
         except Exception as e:
             log.append(f"stop note: {e}")
-    # start
+
     n8n_bin = ROOT / "node_modules" / ".bin" / "n8n"
     child_env = os.environ.copy()
     child_env.update(
@@ -233,6 +274,10 @@ def restart_n8n() -> str:
             "SOURCE_GROUP_ID": env.get("SOURCE_GROUP_ID", ""),
             "TARGET_GROUP_ID": env.get("TARGET_GROUP_ID", ""),
             "BROADCAST_MESSAGE": env.get("BROADCAST_MESSAGE", ""),
+            "BROADCAST_GROUPS": env.get("BROADCAST_GROUPS", ""),
+            "BOT_PREFIX": env.get("BOT_PREFIX", "/"),
+            "BOT_ADMINS": env.get("BOT_ADMINS", ""),
+            "WEBHOOK_PUBLIC_URL": env.get("WEBHOOK_PUBLIC_URL", ""),
         }
     )
     out = open(LOGS / "n8n.log", "a")
@@ -246,7 +291,6 @@ def restart_n8n() -> str:
     )
     pid_file.write_text(str(proc.pid))
     log.append(f"started n8n pid {proc.pid}")
-    # wait health
     for i in range(60):
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{N8N_PORT}/healthz", timeout=2) as r:
@@ -255,7 +299,7 @@ def restart_n8n() -> str:
                     return "\n".join(log)
         except Exception:
             time.sleep(1)
-    raise RuntimeError("n8n did not become healthy\n" + "\n".join(log))
+    raise RuntimeError("n8n did not become healthy\\n" + "\\n".join(log))
 
 
 def n8n_login_cookie() -> str:
@@ -270,30 +314,31 @@ def n8n_login_cookie() -> str:
     )
     if code >= 400:
         raise RuntimeError(f"login failed {code}: {payload}")
-    # join cookies
-    jar = []
-    for c in cookies:
-        jar.append(c.split(";", 1)[0])
-    return "; ".join(jar)
+    return "; ".join(c.split(";", 1)[0] for c in cookies)
 
 
-def import_and_activate(cookie: str) -> str:
+def workflow_files() -> list[Path]:
+    return [
+        ROOT / "n8n-workflows/ototext-bot-commands.json",
+        ROOT / "n8n-workflows/scenario-1-scheduled-group-broadcast.json",
+        ROOT / "n8n-workflows/scenario-2-sync-group-participants.json",
+    ]
+
+
+def import_and_activate(cookie: str, activate_names: set[str] | None = None) -> str:
     lines = []
-    # CLI import (more reliable for file)
     env = read_env()
     child_env = os.environ.copy()
     child_env["N8N_USER_FOLDER"] = str(ROOT / ".n8n-data")
     child_env["N8N_ENCRYPTION_KEY"] = env.get("N8N_ENCRYPTION_KEY", "")
     child_env["N8N_BLOCK_ENV_ACCESS_IN_NODE"] = "false"
-    for wf in [
-        ROOT / "n8n-workflows/scenario-1-scheduled-group-broadcast.json",
-        ROOT / "n8n-workflows/scenario-2-sync-group-participants.json",
-    ]:
-        # ensure id
+
+    for wf in workflow_files():
+        if not wf.exists():
+            lines.append(f"missing {wf.name}")
+            continue
         data = json.loads(wf.read_text())
         if not data.get("id"):
-            import uuid
-
             data["id"] = str(uuid.uuid4())
             data["versionId"] = str(uuid.uuid4())
             wf.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
@@ -304,36 +349,36 @@ def import_and_activate(cookie: str) -> str:
             capture_output=True,
             text=True,
         )
-        lines.append(f"import {wf.name}: rc={r.returncode} {r.stdout.strip()} {r.stderr.strip()}")
+        lines.append(f"import {wf.name}: rc={r.returncode} {(r.stdout or r.stderr).strip()}")
 
-    # list + activate via API
     code, payload, _ = http_json("GET", f"http://127.0.0.1:{N8N_PORT}/rest/workflows", cookies=cookie)
     workflows = payload.get("data") if isinstance(payload, dict) else payload
     if isinstance(workflows, dict):
         workflows = workflows.get("data") or workflows.get("workflows") or []
+
+    activate_names = activate_names or {"Ototext Bot — Prefix Komutlar"}
     for wf in workflows or []:
         wid = wf.get("id")
-        name = wf.get("name")
-        # fetch full
+        name = wf.get("name") or ""
+        if name not in activate_names:
+            continue
         c2, full, _ = http_json("GET", f"http://127.0.0.1:{N8N_PORT}/rest/workflows/{wid}", cookies=cookie)
         body = full.get("data", full)
-        body["active"] = True
-        # n8n 2.x may use activate endpoint
+        version_id = body.get("versionId")
         c3, res, _ = http_json(
             "POST",
             f"http://127.0.0.1:{N8N_PORT}/rest/workflows/{wid}/activate",
-            {},
+            {"versionId": version_id},
             cookies=cookie,
         )
         if c3 >= 400:
-            # fallback patch/put
             c3, res, _ = http_json(
                 "PATCH",
                 f"http://127.0.0.1:{N8N_PORT}/rest/workflows/{wid}",
-                {"active": True},
+                {"active": True, "versionId": version_id},
                 cookies=cookie,
             )
-        lines.append(f"activate {name} ({wid}): HTTP {c3} {json.dumps(res)[:180]}")
+        lines.append(f"activate {name} ({wid}): HTTP {c3} active={res.get('data', res).get('active') if isinstance(res, dict) else res}")
     return "\n".join(lines)
 
 
@@ -344,13 +389,16 @@ def run_setup(payload: dict) -> dict:
     if not instance or not token:
         return {"ok": False, "error": "ID_INSTANCE and API_TOKEN required"}
 
-    source = (payload.get("SOURCE_GROUP_ID") or "KAYNAK_GRUP_ID@g.us").strip()
-    target = (payload.get("TARGET_GROUP_ID") or "HEDEF_GRUP_ID@g.us").strip()
-    message = (payload.get("BROADCAST_MESSAGE") or "Merhaba! Green API n8n broadcast mesaji.").strip()
+    prefix = (payload.get("BOT_PREFIX") or "/").strip() or "/"
+    admins = normalize_admin(payload.get("BOT_ADMINS") or "")
+    source = (payload.get("SOURCE_GROUP_ID") or "").strip() or "KAYNAK_GRUP_ID@g.us"
+    target = (payload.get("TARGET_GROUP_ID") or "").strip() or "HEDEF_GRUP_ID@g.us"
+    message = (payload.get("BROADCAST_MESSAGE") or "Ototext broadcast").strip()
     raw_groups = (payload.get("GROUP_CHAT_IDS") or "").strip()
     groups = [g.strip() for g in re.split(r"[\n,;]+", raw_groups) if g.strip()]
+    broadcast_groups = ",".join(groups)
 
-    logs.append("1) Saving .env")
+    logs.append("1) Saving .env (bot + API)")
     write_env(
         {
             "ID_INSTANCE": instance,
@@ -358,31 +406,43 @@ def run_setup(payload: dict) -> dict:
             "SOURCE_GROUP_ID": source,
             "TARGET_GROUP_ID": target,
             "BROADCAST_MESSAGE": message,
+            "BROADCAST_GROUPS": broadcast_groups,
+            "BOT_PREFIX": prefix,
+            "BOT_ADMINS": admins,
         }
     )
 
     if groups:
-        logs.append(f"2) Updating scenario-1 with {len(groups)} groups")
-        # pad/truncate to keep at least provided list
+        logs.append(f"2) Scenario-1 groups: {len(groups)}")
         update_scenario1_groups(groups, message)
     else:
-        logs.append("2) No group list provided — keeping existing placeholders")
+        logs.append("2) No broadcast groups yet")
 
-    logs.append("3) Validating Green API")
+    logs.append("3) Validate Green API")
     ok, detail = green_api_state(instance, token)
     logs.append(detail)
     if not ok:
         return {"ok": False, "error": "Green API not authorized / invalid credentials", "log": "\n".join(logs)}
 
-    logs.append("4) Restarting n8n with credentials")
+    logs.append("4) Public n8n tunnel")
+    public = ensure_n8n_tunnel()
+    bot_webhook = f"{public}/webhook/ototext-bot"
+    write_env({"WEBHOOK_PUBLIC_URL": public, "WEBHOOK_URL": public + "/"})
+    logs.append(f"public={public}")
+    logs.append(f"bot_webhook={bot_webhook}")
+
+    logs.append("5) Restart n8n")
     logs.append(restart_n8n())
 
-    logs.append("5) Login + import/activate")
+    logs.append("6) Import + activate bot workflow")
     cookie = n8n_login_cookie()
     logs.append(import_and_activate(cookie))
 
-    logs.append("DONE")
-    return {"ok": True, "log": "\n".join(logs)}
+    logs.append("7) Register Green API webhook")
+    logs.append(green_api_set_webhook(instance, token, bot_webhook))
+
+    logs.append("DONE — WhatsApp’tan bota yaz: " + prefix + "help")
+    return {"ok": True, "log": "\n".join(logs), "bot_webhook": bot_webhook, "prefix": prefix}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -426,7 +486,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"Mobile setup server on http://0.0.0.0:{PORT}")
+    print(f"Ototext mobile setup on http://0.0.0.0:{PORT}")
     server.serve_forever()
 
 

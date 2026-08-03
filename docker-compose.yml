@@ -26,6 +26,10 @@ services:
       - SOURCE_GROUP_ID=${SOURCE_GROUP_ID}
       - TARGET_GROUP_ID=${TARGET_GROUP_ID}
       - BROADCAST_MESSAGE=${BROADCAST_MESSAGE}
+      - BROADCAST_GROUPS=${BROADCAST_GROUPS}
+      - BOT_PREFIX=${BOT_PREFIX:-/}
+      - BOT_ADMINS=${BOT_ADMINS}
+      - WEBHOOK_PUBLIC_URL=${WEBHOOK_PUBLIC_URL}
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n-workflows:/workflows:ro
