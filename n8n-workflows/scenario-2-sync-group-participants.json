@@ -1,9 +1,9 @@
 {
-  "name": "Senaryo 2 - Grup Katılımcı Senkronizasyonu ve Ekleme",
+  "name": "Ototext — Grup Katılımcı Senkronizasyonu",
   "nodes": [
     {
       "parameters": {
-        "content": "## Kurulum\n- `ID_INSTANCE`, `API_TOKEN`, `SOURCE_GROUP_ID`, `TARGET_GROUP_ID` → `.env`\n- Manual veya Schedule ile başlatılır.\n\n**Green API:** endpoint `addGroupParticipant`, alan `participantChatId`.\n`userChatId` Code çıktısından map edilir.\n\n**Rate limit:** Her ekleme öncesi 15 dakika.\n**Not:** Wait için workflow Active olmalıdır.",
+        "content": "## Ototext — Senaryo 2\n- `ID_INSTANCE`, `API_TOKEN`, `SOURCE_GROUP_ID`, `TARGET_GROUP_ID` → `.env`\n- Manual veya Schedule ile başlatılır.\n\n**Green API:** `addGroupParticipant` + `participantChatId`\n`userChatId` Code çıktısından map edilir.\n\n**Rate limit:** Her ekleme öncesi 15 dakika.\n**Not:** Wait için workflow Active olmalıdır.",
         "height": 420,
         "width": 480,
         "color": 4

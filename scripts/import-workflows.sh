@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-CONTAINER="${N8N_CONTAINER:-green-api-n8n}"
+CONTAINER="${N8N_CONTAINER:-ototext-n8n}"
 
 if ! sudo docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
   echo "ERROR: Container '$CONTAINER' is not running. Start with: ./scripts/setup.sh"

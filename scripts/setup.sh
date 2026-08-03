@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-echo "=== Green API + n8n setup ==="
+echo "=== Ototext setup (n8n + Green API) ==="
 
 if [[ ! -f .env ]]; then
   echo "Creating .env from .env.example ..."

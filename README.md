@@ -1,14 +1,6 @@
-# Green API + n8n WhatsApp Otomasyon Sistemi
+# Ototext
 
-Hazır n8n stack + 2 Green API workflow. Bu ortamda **native** olarak çalışır; sunucunuzda Docker ile de ayağa kalkar.
-
-## Durum (bu ortam)
-
-- n8n: `http://localhost:5678` (çalışıyor)
-- Owner: `admin@localhost.local` / `.env` içindeki `N8N_OWNER_PASSWORD`
-- Import edilen workflow'lar:
-  - Senaryo 1 — Zamanlanmış Grup Broadcast
-  - Senaryo 2 — Grup Katılımcı Senkronizasyonu
+WhatsApp grup otomasyonu — n8n + Green API altyapısı.
 
 ## Telefonla kurulum (tek form)
 
@@ -19,6 +11,14 @@ bash scripts/start-mobile-setup.sh
 Çıkan `trycloudflare.com` linkini telefonda aç → `ID_INSTANCE` + `API_TOKEN` yapıştır → **Kur ve Aktif Et**.
 
 Script Green API'yi doğrular, n8n'i yeniden başlatır, workflow'ları import/aktif eder.
+
+## Durum (bu ortam)
+
+- n8n: `http://localhost:5678` (çalışıyor)
+- Owner: `admin@localhost.local` / `.env` içindeki `N8N_OWNER_PASSWORD`
+- Import edilen workflow'lar:
+  - Ototext — Zamanlanmış Grup Broadcast
+  - Ototext — Grup Katılımcı Senkronizasyonu
 
 ## 1) Credential doldur
 
@@ -35,7 +35,7 @@ SOURCE_GROUP_ID=120363xxxx@g.us
 TARGET_GROUP_ID=120363yyyy@g.us
 ```
 
-Senaryo 1 Code node içinde 20 adet `chatId` placeholder'ını gerçek grup ID'leriyle değiştirin (UI veya JSON).
+Senaryo 1 Code node içinde chatId listesini gerçek grup ID'leriyle değiştirin (UI, mobil form veya JSON).
 
 ## 2) Başlat / durdur
 
@@ -57,7 +57,7 @@ bash scripts/stop.sh
 
 1. http://localhost:5678
 2. Login (`admin@localhost.local`)
-3. Her iki workflow'u aç → **Active**
+3. Her iki Ototext workflow'unu aç → **Active**
 
 > Uzun `Wait` düğümleri için workflow Active olmalıdır.
 
@@ -65,7 +65,7 @@ bash scripts/stop.sh
 
 | Senaryo | Akış | Rate limit |
 |---------|------|------------|
-| 1 Broadcast | Schedule → Code(20 grup) → Loop → Wait → `POST /sendMessage` | 3 dk |
+| 1 Broadcast | Schedule → Code(gruplar) → Loop → Wait → `POST /sendMessage` | 3 dk |
 | 2 Sync | Manual/Schedule → `getGroupData` → Code → Loop → Wait → `addGroupParticipant` | 15 dk |
 
 API URL:
@@ -91,6 +91,7 @@ package.json
 scripts/
   setup-native.sh / stop-native.sh / import-workflows-native.sh
   setup.sh / start.sh / stop.sh / import-workflows.sh   # Docker
+  start-mobile-setup.sh / mobile-setup-server.py
   validate-green-api.sh
 n8n-workflows/
   scenario-1-scheduled-group-broadcast.json

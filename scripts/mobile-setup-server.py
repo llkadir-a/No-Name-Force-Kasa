@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Mobile-friendly one-page setup for Green API + n8n.
-Opens on phone via Cloudflare tunnel. Saves credentials, validates API,
+"""Ototext mobile setup portal.
+Opens on phone via Cloudflare tunnel. Saves credentials, validates Green API,
 restarts n8n, imports & activates workflows.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
-<title>Green API Kurulum</title>
+<title>Ototext Kurulum</title>
 <style>
   :root { --bg:#0b0f14; --card:#151b24; --text:#e8eef7; --muted:#93a0b4; --acc:#3ddc97; --danger:#ff6b6b; --line:#243041; }
   * { box-sizing: border-box; }
@@ -51,8 +51,8 @@ HTML = """<!DOCTYPE html>
 </head>
 <body>
   <div class="wrap">
-    <h1>WhatsApp Green API Kurulum</h1>
-    <p>Telefondan tek seferlik form. Kaydedince sistem kendini ayarlar, doğrular ve workflow’ları aktif eder.</p>
+    <h1>Ototext Kurulum</h1>
+    <p>Telefondan tek seferlik form. Kaydedince Ototext kendini ayarlar, Green API’yi doğrular ve workflow’ları aktif eder.</p>
     <div class="card">
       <form id="f">
         <label>ID_INSTANCE</label>

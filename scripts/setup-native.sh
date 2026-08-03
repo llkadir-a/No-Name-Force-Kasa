@@ -42,7 +42,7 @@ N8N_OWNER_PASSWORD="$(get_env N8N_OWNER_PASSWORD)"
 N8N_OWNER_FIRST_NAME="$(get_env N8N_OWNER_FIRST_NAME)"
 N8N_OWNER_LAST_NAME="$(get_env N8N_OWNER_LAST_NAME)"
 
-echo "=== Native n8n setup ==="
+echo "=== Ototext native setup ==="
 
 export N8N_USER_FOLDER
 export N8N_HOST N8N_PORT N8N_PROTOCOL WEBHOOK_URL

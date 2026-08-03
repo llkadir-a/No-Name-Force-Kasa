@@ -55,7 +55,7 @@ done
 echo "$URL" >logs/mobile-setup-url.txt
 echo
 echo "============================================"
-echo " TELEFON LINK:"
+echo " OTOTEXT — TELEFON LINK:"
 echo " $URL"
 echo "============================================"
 echo "Bu linki telefonda aç → Green API bilgilerini yapıştır → Kur ve Aktif Et"

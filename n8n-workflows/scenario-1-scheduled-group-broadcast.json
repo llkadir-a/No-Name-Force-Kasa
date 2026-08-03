@@ -1,9 +1,9 @@
 {
-  "name": "Senaryo 1 - Zamanlanmış Grup Mesaj Yönetimi (Broadcast)",
+  "name": "Ototext — Zamanlanmış Grup Broadcast",
   "nodes": [
     {
       "parameters": {
-        "content": "## Kurulum\n- `ID_INSTANCE` ve `API_TOKEN` `.env` / Docker ortam değişkenlerinden okunur.\n- Code düğümündeki 20 adet `chatId` değerini gerçek grup ID'leriyle değiştirin.\n- Mesaj: `BROADCAST_MESSAGE` env veya Code içindeki `message`.\n- Schedule Trigger periyodunu ihtiyacınıza göre ayarlayın.\n\n**API:** `https://api.green-api.com/waInstance{{$env.ID_INSTANCE}}/sendMessage/{{$env.API_TOKEN}}`\n\n**Rate limit:** Her mesaj öncesi 3 dakika bekleme.\n**Not:** Wait düğümü için workflow Active olmalıdır.",
+        "content": "## Ototext — Senaryo 1\n- `ID_INSTANCE` ve `API_TOKEN` `.env` üzerinden okunur.\n- Code düğümündeki chatId değerlerini gerçek grup ID'leriyle değiştirin.\n- Mesaj: `BROADCAST_MESSAGE` env veya Code içindeki `message`.\n- Schedule Trigger periyodunu ihtiyacınıza göre ayarlayın.\n\n**API:** `https://api.green-api.com/waInstance{{$env.ID_INSTANCE}}/sendMessage/{{$env.API_TOKEN}}`\n\n**Rate limit:** Her mesaj öncesi 3 dakika.\n**Not:** Wait düğümü için workflow Active olmalıdır.",
         "height": 440,
         "width": 480,
         "color": 5

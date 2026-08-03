@@ -1,10 +1,10 @@
-# n8n Workflow JSON'ları
+# Ototext — n8n Workflow JSON'ları
 
-Import-ready Green API workflows.
+Import-ready WhatsApp otomasyon workflow'ları (Green API).
 
 ## Dosyalar
-- `scenario-1-scheduled-group-broadcast.json`
-- `scenario-2-sync-group-participants.json`
+- `scenario-1-scheduled-group-broadcast.json` → **Ototext — Zamanlanmış Grup Broadcast**
+- `scenario-2-sync-group-participants.json` → **Ototext — Grup Katılımcı Senkronizasyonu**
 
 ## Import
 ```bash
