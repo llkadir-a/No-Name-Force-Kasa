@@ -29,9 +29,12 @@ function saveState(state) {
 }
 
 function defaultState() {
+  const main = (($env.BOT_PREFIX || '!').toString()) || '!';
   return {
     admins: [],
     botWid: '',
+    mainPrefix: main,
+    prefixes: [main],
     broadcast: { running: false, text: '', intervalMin: 3, index: 0, sent: 0, lastSendAt: 0, startedAt: 0, cycle: 0 },
     dm: { running: false, text: '', groupId: '', intervalMin: 3, queue: [], index: 0, sent: 0, failed: 0, lastSendAt: 0, startedAt: 0 },
     mining: { running: false, targetGroupId: '', targetName: '', members: 0, addedToday: 0, pending: 0, totalTarget: 0, durationMin: 0, startedAt: 0, lastAddAt: 0, dayKey: '' },
@@ -45,15 +48,37 @@ function defaultState() {
 function ensureState() {
   let s = loadState();
   if (!s) s = defaultState();
+  const d = defaultState();
   s.admins = Array.isArray(s.admins) ? s.admins : [];
   s.blacklist = Array.isArray(s.blacklist) ? s.blacklist : [];
   s.invites = Array.isArray(s.invites) ? s.invites : [];
   s.filters = s.filters || { minUye: 0 };
-  s.broadcast = Object.assign(defaultState().broadcast, s.broadcast || {});
-  s.dm = Object.assign(defaultState().dm, s.dm || {});
-  s.mining = Object.assign(defaultState().mining, s.mining || {});
-  s.stats = Object.assign(defaultState().stats, s.stats || {});
+  s.broadcast = Object.assign(d.broadcast, s.broadcast || {});
+  s.dm = Object.assign(d.dm, s.dm || {});
+  s.mining = Object.assign(d.mining, s.mining || {});
+  s.stats = Object.assign(d.stats, s.stats || {});
+  s.mainPrefix = (s.mainPrefix || d.mainPrefix || '!').toString();
+  s.prefixes = Array.isArray(s.prefixes) ? s.prefixes.map(String).filter(Boolean) : [];
+  if (!s.prefixes.length) s.prefixes = [s.mainPrefix];
+  if (!s.prefixes.includes(s.mainPrefix)) s.prefixes.unshift(s.mainPrefix);
+  s.prefixes = [...new Set(s.prefixes)];
   return s;
+}
+
+function normalizePrefix(raw) {
+  let px = String(raw || '').trim();
+  if (!px) return '';
+  if ((px.startsWith('"') && px.endsWith('"')) || (px.startsWith("'") && px.endsWith("'"))) px = px.slice(1, -1);
+  px = px.replace(/[()]/g, '').trim();
+  return px;
+}
+
+function matchPrefix(text, prefixes) {
+  const sorted = [...prefixes].sort((a, b) => b.length - a.length);
+  for (const px of sorted) {
+    if (text.startsWith(px)) return px;
+  }
+  return null;
 }
 
 function normId(raw) {
@@ -212,16 +237,25 @@ else {
   return [];
 }
 text = String(text || '').trim();
-const prefix = ($env.BOT_PREFIX || '!').toString();
-if (!text.startsWith(prefix)) {
+const usedPrefix = matchPrefix(text, state.prefixes);
+if (!usedPrefix) {
   saveState(state);
   return [];
 }
+const prefix = state.mainPrefix || usedPrefix;
 
-const rest = text.slice(prefix.length).trim();
+const rest = text.slice(usedPrefix.length).trim();
 const parts = rest.split(/\s+/);
-const command = (parts[0] || '').toLowerCase();
-const args = rest.slice(parts[0].length).trim();
+let command = (parts[0] || '').toLowerCase();
+let args = rest.slice(parts[0].length).trim();
+// support "!prefix cikar x" as prefix-cikar
+if (command === 'prefix' && args) {
+  const a0 = (args.split(/\s+/)[0] || '').toLowerCase();
+  if (['cikar', 'çıkar', 'ekle', 'main', 'liste'].includes(a0)) {
+    command = 'prefix-' + (a0 === 'çıkar' ? 'cikar' : a0);
+    args = args.slice(a0.length).trim();
+  }
+}
 const chatId = body.senderData?.chatId || '';
 const sender = body.senderData?.sender || chatId;
 
@@ -252,6 +286,7 @@ try {
         `${prefix}katil (link) / ${prefix}tumkatil (link...)`,
         `${prefix}karakter ayarla (isim)`,
         `${prefix}admin — admin menüsü`,
+        `${prefix}prefix — prefix menüsü`,
         `${prefix}istatistik`,
       ].join('\n');
       break;
@@ -574,6 +609,62 @@ try {
       reply = lines.join('\n');
       break;
     }
+
+    case 'prefix': {
+      reply = [
+        '*🔤 Prefix Menü*',
+        `${prefix}prefix-main (prefix) — ana prefix yap`,
+        `${prefix}prefix-ekle (prefix) — ek prefix ekle`,
+        `${prefix}prefix-cikar (prefix) — prefix çıkar`,
+        `${prefix}prefix cikar (prefix) — aynı komut`,
+        '',
+        `Ana prefix: ${state.mainPrefix}`,
+        `Aktif: ${state.prefixes.join('  ')}`,
+      ].join('\n');
+      break;
+    }
+    case 'prefix-main': {
+      const px = normalizePrefix(args);
+      if (!px) { reply = `Kullanım: ${prefix}prefix-main !`; break; }
+      state.mainPrefix = px;
+      if (!state.prefixes.includes(px)) state.prefixes.unshift(px);
+      else {
+        state.prefixes = [px, ...state.prefixes.filter((x) => x !== px)];
+      }
+      reply = `✅ Ana prefix: ${px}\nAktif: ${state.prefixes.join('  ')}`;
+      break;
+    }
+    case 'prefix-ekle': {
+      const px = normalizePrefix(args);
+      if (!px) { reply = `Kullanım: ${prefix}prefix-ekle /`; break; }
+      if (!state.prefixes.includes(px)) state.prefixes.push(px);
+      reply = `✅ Prefix eklendi: ${px}\nAktif: ${state.prefixes.join('  ')}\nAna: ${state.mainPrefix}`;
+      break;
+    }
+    case 'prefix-cikar': {
+      const px = normalizePrefix(args);
+      if (!px) { reply = `Kullanım: ${prefix}prefix-cikar /`; break; }
+      if (px === state.mainPrefix) {
+        reply = `⚠️ Ana prefix çıkarılamaz. Önce ${prefix}prefix-main ile başka ana seç.`;
+        break;
+      }
+      if (state.prefixes.length <= 1) {
+        reply = '⚠️ En az 1 prefix kalmalı.';
+        break;
+      }
+      state.prefixes = state.prefixes.filter((x) => x !== px);
+      reply = `✅ Prefix çıkarıldı: ${px}\nAktif: ${state.prefixes.join('  ')}`;
+      break;
+    }
+    case 'prefix-liste': {
+      reply = [
+        '*🔤 Prefix Listesi*',
+        `Ana: ${state.mainPrefix}`,
+        ...state.prefixes.map((x, i) => `${i + 1}. ${x}${x === state.mainPrefix ? ' (ana)' : ''}`),
+      ].join('\n');
+      break;
+    }
+
     case 'istatistik': {
       const s = state.stats;
       reply = [

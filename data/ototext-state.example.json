@@ -47,5 +47,9 @@
     "dmSent": 0,
     "joins": 0,
     "startedAt": 0
-  }
+  },
+  "mainPrefix": "!",
+  "prefixes": [
+    "!"
+  ]
 }

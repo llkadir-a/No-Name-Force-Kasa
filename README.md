@@ -21,6 +21,10 @@ WhatsApp bot — `!` prefix komutlarla yönetilir. Bot numarası otomatik admind
 | `!katil (link)` / `!tumkatil (link...)` | Gruba katıl |
 | `!karakter ayarla (isim)` | WhatsApp ismi |
 | `!admin` / `!admin-ekle` / `!admin-cikar` / `!admin-list` | Adminler |
+| `!prefix` | Prefix menüsü |
+| `!prefix-main (p)` | Ana prefix |
+| `!prefix-ekle (p)` | Ek prefix |
+| `!prefix-cikar (p)` / `!prefix cikar (p)` | Prefix çıkar |
 | `!istatistik` | Genel istatistik |
 
 Sadece adminler kullanabilir. Bot’un kendi numarası otomatik admin.
