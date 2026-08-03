@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>NNF — Ototext Admin</title>
+<!--
+  ============================================================
+  OTOTEXT ADMIN PANEL — TAŞINABİLİR DOSYA
+  ============================================================
+  Bu dosyayı nonameforce.com sitenizin admin paneline ekleyin.
+  Agent bu dosyayı senin isteklerine göre yeniden yazar / günceller.
+
+  Kurulum (2 yol):
+
+  A) Sadece UI (API ayrı sunucuda):
+     - Bu HTML'i /admin/ototext.html olarak koy
+     - Aşağıdaki API_BASE'i satıcı API adresine çevir
+       örn: https://api.nonameforce.com  veya  http://SUNUCU:8790
+
+  B) Bu repodaki satıcı API ile:
+     bash scripts/start-seller-panel.sh
+     → API: http://127.0.0.1:8790
+     Bu sayfayı aynı origin'den veya CORS açık sunucudan aç
+
+  Bu panel YAPAR:
+    - Lisans üret / listele / iptal
+    - Müşteri kit (ZIP) indir
+    - Yerel Ototext PANIC (otox/dm/mining durdur) — API destekliyorsa
+    - Lisans doğrula
+
+  Bu panel YAPMAZ:
+    - Başkasının WhatsApp hesabına girme / oturum çalma
+  ============================================================
+-->
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #101010;
+    --card: #1c1c1c;
+    --text: #fff;
+    --muted: #9aa;
+    --acc: #00ff88;
+    --line: #2a2a2a;
+    --danger: #ff4d4d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: Poppins, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .top {
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+    box-shadow: 0 4px 18px rgba(0,255,136,.12);
+  }
+  .brand { font-weight: 700; color: var(--acc); letter-spacing: .02em; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { margin: 0 0 6px; font-size: 1.35rem; }
+  h3 { margin: 0 0 10px; }
+  p { color: var(--muted); line-height: 1.45; }
+  .grid { display: grid; gap: 14px; }
+  @media (min-width: 860px) { .grid.cols-2 { grid-template-columns: 1fr 1fr; } }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+  }
+  label { display: block; font-size: .78rem; color: var(--muted); margin: 10px 0 6px; }
+  input, select {
+    width: 100%;
+    border: 1px solid var(--line);
+    background: #141414;
+    color: var(--text);
+    border-radius: 10px;
+    padding: 11px 12px;
+    font-size: 16px;
+    font-family: inherit;
+  }
+  button {
+    margin-top: 12px;
+    width: 100%;
+    border: 0;
+    border-radius: 10px;
+    padding: 12px;
+    font-weight: 700;
+    font-family: inherit;
+    background: var(--acc);
+    color: #062418;
+    cursor: pointer;
+  }
+  button.secondary { background: #2a2a2a; color: var(--text); }
+  button.danger { background: var(--danger); color: #1a0505; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .key { word-break: break-all; font-family: ui-monospace, monospace; font-size: .72rem; color: #b7f7d4; }
+  .ok { color: var(--acc); }
+  .bad { color: var(--danger); }
+  .muted { color: var(--muted); font-size: .8rem; }
+  .row-actions { display: grid; gap: 6px; min-width: 110px; }
+  #toast {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+    background: #151515; border: 1px solid var(--acc); color: var(--text);
+    padding: 10px 14px; border-radius: 10px; display: none; z-index: 50;
+    max-width: 90vw; font-size: .85rem;
+  }
+  .cfg { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+  .cfg > div { flex: 1; min-width: 180px; }
+  .cfg button { width: auto; margin-top: 0; padding: 11px 16px; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand">NNF · Ototext Admin</div>
+    <div class="muted" id="apiLabel">API: (ayarlanmadı)</div>
+  </div>
+
+  <div class="wrap">
+    <h1>Ototext Yönetim</h1>
+    <p>Lisans, müşteri kiti ve acil durdurma. WhatsApp hesabına girme yok — sadece bot / lisans kontrolü.</p>
+
+    <div class="card" style="margin-bottom:14px;">
+      <h3>API adresi</h3>
+      <div class="cfg">
+        <div>
+          <label>Seller API base (trailing slash yok)</label>
+          <input id="apiBase" placeholder="http://127.0.0.1:8790"/>
+        </div>
+        <button type="button" class="secondary" id="btnSaveApi">Kaydet</button>
+        <button type="button" class="secondary" id="btnPing">Ping</button>
+      </div>
+      <p class="muted" id="pingOut"></p>
+    </div>
+
+    <div class="grid cols-2">
+      <div class="card">
+        <h3>Yeni lisans + kit</h3>
+        <form id="create">
+          <label>Müşteri adı</label>
+          <input name="name" required placeholder="Ahmet"/>
+          <label>E-posta</label>
+          <input name="email" type="email" placeholder="opsiyonel"/>
+          <label>Plan</label>
+          <select name="plan">
+            <option value="standard">standard</option>
+            <option value="pro">pro</option>
+            <option value="lifetime">lifetime</option>
+          </select>
+          <label>Gün</label>
+          <input name="days" type="number" value="365" min="1"/>
+          <label>Green API ID_INSTANCE (müşteri QR okutur, API görmez)</label>
+          <input name="idInstance" placeholder="1101...."/>
+          <label>Green API API_TOKEN</label>
+          <input name="apiToken" placeholder="apiTokenInstance"/>
+          <label>Not</label>
+          <input name="note" placeholder="ödeme / telegram"/>
+          <button type="submit">Lisans Üret + ZIP İndir</button>
+        </form>
+        <pre class="muted" id="createOut"></pre>
+      </div>
+
+      <div class="card">
+        <h3>Acil müdahale</h3>
+        <p class="muted">Bağlı Ototext kopyasında otox / dm / mining / bekleyen onayı durdurur. Hesaba girmez.</p>
+        <label>Hedef (boş = bu sunucudaki yerel bot)</label>
+        <input id="panicTarget" placeholder="local veya müşteri jti"/>
+        <button type="button" class="danger" id="btnPanic">PANIC — Her Şeyi Durdur</button>
+        <pre class="muted" id="panicOut"></pre>
+
+        <hr style="border:0;border-top:1px solid var(--line);margin:16px 0"/>
+        <h3>Lisans doğrula</h3>
+        <label>LICENSE_KEY</label>
+        <input id="verifyKey" placeholder="eyJ...."/>
+        <button type="button" class="secondary" id="btnVerify">Doğrula</button>
+        <pre class="muted" id="verifyOut"></pre>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px;">
+      <h3>Müşteriler</h3>
+      <button type="button" class="secondary" id="btnRefresh" style="width:auto;margin:0 0 12px;">Yenile</button>
+      <div id="list"><p class="muted">Yükleniyor…</p></div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+<script>
+/* ====== yapılandırma ====== */
+const STORAGE_KEY = 'ototext_admin_api_base';
+const $ = (id) => document.getElementById(id);
+
+function apiBase() {
+  return ($('apiBase').value || localStorage.getItem(STORAGE_KEY) || '').replace(/\/$/, '');
+}
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.style.display = 'none'; }, 2800);
+}
+
+async function api(path, opts = {}) {
+  const base = apiBase();
+  if (!base) throw new Error('Önce API adresini kaydet');
+  const r = await fetch(base + path, {
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    ...opts,
+  });
+  const ct = r.headers.get('content-type') || '';
+  if (ct.includes('application/zip')) return { zip: true, response: r };
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok && j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+function saveApi() {
+  const v = $('apiBase').value.trim().replace(/\/$/, '');
+  localStorage.setItem(STORAGE_KEY, v);
+  $('apiLabel').textContent = 'API: ' + (v || '(ayarlanmadı)');
+  toast('API kaydedildi');
+}
+
+async function ping() {
+  try {
+    const j = await api('/health');
+    $('pingOut').textContent = j.ok ? 'OK — satıcı API ayakta' : JSON.stringify(j);
+    toast('Ping OK');
+  } catch (e) {
+    $('pingOut').textContent = String(e.message || e);
+  }
+}
+
+async function refresh() {
+  try {
+    const j = await api('/api/customers');
+    const rows = (j.customers || []).slice().reverse();
+    if (!rows.length) { $('list').innerHTML = '<p class="muted">Henüz müşteri yok.</p>'; return; }
+    let html = '<table><tr><th>Müşteri</th><th>Durum</th><th>Key / JTI</th><th></th></tr>';
+    for (const c of rows) {
+      const st = c.revoked ? '<span class="bad">IPTAL</span>' : '<span class="ok">AKTIF</span>';
+      html += `<tr>
+        <td><b>${escapeHtml(c.name || '-')}</b><br/><span class="muted">${escapeHtml(c.email || '')}<br/>${escapeHtml(c.plan)} / ${c.days}g</span></td>
+        <td>${st}</td>
+        <td><div class="muted">${escapeHtml(c.jti || '')}</div><div class="key">${escapeHtml(c.licenseKey || '')}</div></td>
+        <td class="row-actions">
+          <button class="secondary" data-kit="${escapeHtml(c.jti)}">ZIP Kit</button>
+          ${c.revoked ? '' : `<button class="danger" data-revoke="${escapeHtml(c.jti)}">İptal</button>`}
+        </td>
+      </tr>`;
+    }
+    html += '</table>';
+    $('list').innerHTML = html;
+    $('list').querySelectorAll('[data-kit]').forEach((btn) => {
+      btn.onclick = () => downloadKit(btn.getAttribute('data-kit'));
+    });
+    $('list').querySelectorAll('[data-revoke]').forEach((btn) => {
+      btn.onclick = () => revoke(btn.getAttribute('data-revoke'));
+    });
+  } catch (e) {
+    $('list').innerHTML = '<p class="bad">' + escapeHtml(String(e.message || e)) + '</p>';
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
+async function downloadKit(jti, extra = {}) {
+  try {
+    toast('Kit hazırlanıyor…');
+    const base = apiBase();
+    const r = await fetch(base + '/api/kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jti, ...extra }),
+    });
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('application/zip')) {
+      const j = await r.json();
+      throw new Error(j.error || 'ZIP alınamadı');
+    }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (jti || 'ototext').slice(0, 8) + '-kit.zip';
+    a.click();
+    toast('ZIP indirildi');
+  } catch (e) {
+    toast(String(e.message || e));
+  }
+}
+
+async function revoke(jti) {
+  if (!confirm('Lisans iptal edilsin mi?')) return;
+  try {
+    await api('/api/revoke', { method: 'POST', body: JSON.stringify({ jti }) });
+    toast('İptal edildi');
+    refresh();
+  } catch (e) {
+    toast(String(e.message || e));
+  }
+}
+
+$('create').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData($('create')).entries());
+  body.days = Number(body.days || 365);
+  try {
+    const j = await api('/api/create', { method: 'POST', body: JSON.stringify(body) });
+    if (!j.ok) throw new Error(j.error || 'oluşturulamadı');
+    $('createOut').textContent = 'OK\nJTI=' + j.customer.jti + '\nKEY=' + j.customer.licenseKey;
+    await downloadKit(j.customer.jti, {
+      idInstance: body.idInstance || '',
+      apiToken: body.apiToken || '',
+    });
+    refresh();
+  } catch (err) {
+    $('createOut').textContent = 'HATA\n' + (err.message || err);
+  }
+});
+
+$('btnPanic').onclick = async () => {
+  if (!confirm('PANIC: tüm otox/dm/mining duracak. Emin misin?')) return;
+  try {
+    // Önce özel panic endpoint (eklenecekse), yoksa bilgi ver
+    const target = $('panicTarget').value.trim() || 'local';
+    let j;
+    try {
+      j = await api('/api/panic', { method: 'POST', body: JSON.stringify({ target }) });
+    } catch (e) {
+      $('panicOut').textContent =
+        'Bu API’de /api/panic yok henüz.\n' +
+        'Yerel bot için WhatsApp’tan !panic yaz veya agent’tan panic endpoint eklet.\n' +
+        String(e.message || e);
+      return;
+    }
+    $('panicOut').textContent = JSON.stringify(j, null, 2);
+    toast(j.ok ? 'PANIC OK' : 'PANIC hata');
+  } catch (e) {
+    $('panicOut').textContent = String(e.message || e);
+  }
+};
+
+$('btnVerify').onclick = async () => {
+  try {
+    const j = await api('/api/verify', {
+      method: 'POST',
+      body: JSON.stringify({ key: $('verifyKey').value.trim() }),
+    });
+    $('verifyOut').textContent = JSON.stringify(j, null, 2);
+  } catch (e) {
+    $('verifyOut').textContent = String(e.message || e);
+  }
+};
+
+$('btnSaveApi').onclick = saveApi;
+$('btnPing').onclick = ping;
+$('btnRefresh').onclick = refresh;
+
+(function init() {
+  const saved = localStorage.getItem(STORAGE_KEY) || 'http://127.0.0.1:8790';
+  $('apiBase').value = saved;
+  $('apiLabel').textContent = 'API: ' + saved;
+  refresh().catch(() => {});
+})();
+</script>
+</body>
+</html>
