@@ -60,7 +60,7 @@ HTML = """<!DOCTYPE html>
         <label>Admin WhatsApp no (komut yetkisi)</label>
         <input name="BOT_ADMINS" required placeholder="905xxxxxxxxx" autocomplete="off"/>
         <label>Komut prefix</label>
-        <input name="BOT_PREFIX" value="/" placeholder="/"/>
+        <input name="BOT_PREFIX" value="!" placeholder="/"/>
         <label>Broadcast grupları (satır başına chatId)</label>
         <textarea name="GROUP_CHAT_IDS" placeholder="120363...@g.us"></textarea>
         <label>SOURCE_GROUP_ID (sync kaynak)</label>
@@ -269,6 +269,7 @@ def restart_n8n() -> str:
             "N8N_ENCRYPTION_KEY": env.get("N8N_ENCRYPTION_KEY", ""),
             "N8N_USER_MANAGEMENT_JWT_SECRET": env.get("N8N_USER_MANAGEMENT_JWT_SECRET", ""),
             "N8N_BLOCK_ENV_ACCESS_IN_NODE": "false",
+            "NODE_FUNCTION_ALLOW_BUILTIN": "fs,path",
             "ID_INSTANCE": env.get("ID_INSTANCE", ""),
             "API_TOKEN": env.get("API_TOKEN", ""),
             "SOURCE_GROUP_ID": env.get("SOURCE_GROUP_ID", ""),
@@ -320,6 +321,7 @@ def n8n_login_cookie() -> str:
 def workflow_files() -> list[Path]:
     return [
         ROOT / "n8n-workflows/ototext-bot-commands.json",
+        ROOT / "n8n-workflows/ototext-bot-worker.json",
         ROOT / "n8n-workflows/scenario-1-scheduled-group-broadcast.json",
         ROOT / "n8n-workflows/scenario-2-sync-group-participants.json",
     ]
@@ -356,7 +358,7 @@ def import_and_activate(cookie: str, activate_names: set[str] | None = None) -> 
     if isinstance(workflows, dict):
         workflows = workflows.get("data") or workflows.get("workflows") or []
 
-    activate_names = activate_names or {"Ototext Bot — Prefix Komutlar"}
+    activate_names = activate_names or {"Ototext Bot — Prefix Komutlar", "Ototext Bot — Worker"}
     for wf in workflows or []:
         wid = wf.get("id")
         name = wf.get("name") or ""
@@ -389,7 +391,7 @@ def run_setup(payload: dict) -> dict:
     if not instance or not token:
         return {"ok": False, "error": "ID_INSTANCE and API_TOKEN required"}
 
-    prefix = (payload.get("BOT_PREFIX") or "/").strip() or "/"
+    prefix = (payload.get("BOT_PREFIX") or "!").strip() or "!"
     admins = normalize_admin(payload.get("BOT_ADMINS") or "")
     source = (payload.get("SOURCE_GROUP_ID") or "").strip() or "KAYNAK_GRUP_ID@g.us"
     target = (payload.get("TARGET_GROUP_ID") or "").strip() or "HEDEF_GRUP_ID@g.us"

@@ -1,24 +1,29 @@
 # Ototext
 
-WhatsApp bot — Green API numarana bağlanır, prefix komutlarla yönetilir.
+WhatsApp bot — `!` prefix komutlarla yönetilir. Bot numarası otomatik admindir.
 
-## Bot komutları (varsayılan prefix `/`)
+## Komutlar
 
 | Komut | Açıklama |
 |-------|----------|
-| `/help` | Komut listesi |
-| `/ping` | Bot ayakta mı |
-| `/status` | Green API instance durumu |
-| `/id` | chatId / sender bilgin |
-| `/groups [sayfa]` | Grup id, isim, üye sayısı (sayfa sayfa) |
-| `/blacklist` | Kara listeyi göster |
-| `/blacklist <no|id>` | Grubu kara listeye al — broadcast atlar |
-| `/unblacklist <no|id>` | Kara listeden çıkar |
-| `/broadcast <mesaj>` | Gruplara mesaj (blacklist hariç) |
-| `/sync` | Sync bilgilendirmesi |
+| `!yardim` | Ana menü |
+| `!otox (metin)` | Otomatik grup yayını başlat |
+| `!durdur` | Yayını durdur |
+| `!durum` | Yayın statusu |
+| `!sure 3` | Yayın aralığı (dakika) |
+| `!dm (metin). (grupId)` | Gruptakilere DM |
+| `!dm-durdur` / `!dm-sure` / `!dm-durum` | DM kontrol |
+| `!gruplar 1` | Gruplar (10/sayfa: no, isim, üye, id) |
+| `!davetler` | DM’den gelen davet linkleri |
+| `!filtre` / `!min-uye N` / `!temizlik` | Filtreler |
+| `!black` / `!black-ekle` / `!black-cikar` / `!black-liste` | Kara liste |
+| `!mining` / `!mining-baslat` / `!mining-durdur` / `!mining-durum` | Üye ekleme |
+| `!katil (link)` / `!tumkatil (link...)` | Gruba katıl |
+| `!karakter ayarla (isim)` | WhatsApp ismi |
+| `!admin` / `!admin-ekle` / `!admin-cikar` / `!admin-list` | Adminler |
+| `!istatistik` | Genel istatistik |
 
-Sadece `BOT_ADMINS` numaraları komut çalıştırabilir.
-
+Sadece adminler kullanabilir. Bot’un kendi numarası otomatik admin.
 
 ## Telefonla kurulum
 
@@ -26,44 +31,20 @@ Sadece `BOT_ADMINS` numaraları komut çalıştırabilir.
 bash scripts/start-mobile-setup.sh
 ```
 
-Formda:
-1. Green API `ID_INSTANCE` + `API_TOKEN`
-2. Admin telefon numaran
-3. Grup chatId’leri (opsiyonel)
+Forma Green API `ID_INSTANCE` + `API_TOKEN` + admin numaranı yaz.
 
-Ototext: n8n public tunnel açar → bot workflow’u aktif eder → Green API webhook kaydeder.
+## Mimari
 
-Sonra WhatsApp’tan bota `/help` yaz.
+- `Ototext Bot — Prefix Komutlar` — webhook komut motoru
+- `Ototext Bot — Worker` — her 1 dk yayın/DM/mining kuyruğu
+- State: `data/ototext-state.json`
 
-## Ortam değişkenleri
+## Ortam
 
 ```env
 ID_INSTANCE=...
 API_TOKEN=...
-BOT_PREFIX=/
+BOT_PREFIX=!
 BOT_ADMINS=905xxxxxxxxx@c.us
-BROADCAST_GROUPS=120363aaa@g.us,120363bbb@g.us
-SOURCE_GROUP_ID=...
-TARGET_GROUP_ID=...
-WEBHOOK_URL=https://....trycloudflare.com/
+NODE_FUNCTION_ALLOW_BUILTIN=fs,path
 ```
-
-## Workflow’lar
-
-- `Ototext Bot — Prefix Komutlar` (webhook `/webhook/ototext-bot`)
-- `Ototext — Zamanlanmış Grup Broadcast`
-- `Ototext — Grup Katılımcı Senkronizasyonu`
-
-## Native / Docker
-
-```bash
-npm install && npm run setup
-npm run mobile
-# Docker: npm run setup:docker
-```
-
-## Notlar
-
-- Webhook için public URL gerekir (`scripts/ensure-n8n-tunnel.sh`)
-- Cloudflare quick tunnel URL’leri değişebilir; değişince formu tekrar çalıştır
-- Wait düğümleri için workflow Active olmalı

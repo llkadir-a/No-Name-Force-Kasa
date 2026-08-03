@@ -1,12 +1,6 @@
-# Ototext — n8n Workflow JSON'ları
+# Ototext workflows
 
-## Bot
-- `ototext-bot-commands.json` → **Ototext Bot — Prefix Komutlar**
-  - Webhook: `ototext-bot`
-  - `/groups [sayfa]` → id, isim, üye (sayfalı)
-  - `/blacklist <no|id>` → broadcast bu gruplara gitmez
-  - `/unblacklist <no|id>`
-
-## Yardımcı
+- `ototext-bot-commands.json` — `!` komut webhook botu
+- `ototext-bot-worker.json` — 1 dk worker (otox/dm/mining)
 - `scenario-1-scheduled-group-broadcast.json`
 - `scenario-2-sync-group-participants.json`

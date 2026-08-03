@@ -1,0 +1,51 @@
+{
+  "admins": [],
+  "botWid": "",
+  "broadcast": {
+    "running": false,
+    "text": "",
+    "intervalMin": 3,
+    "index": 0,
+    "sent": 0,
+    "lastSendAt": 0,
+    "startedAt": 0,
+    "cycle": 0
+  },
+  "dm": {
+    "running": false,
+    "text": "",
+    "groupId": "",
+    "intervalMin": 3,
+    "queue": [],
+    "index": 0,
+    "sent": 0,
+    "failed": 0,
+    "lastSendAt": 0,
+    "startedAt": 0
+  },
+  "mining": {
+    "running": false,
+    "targetGroupId": "",
+    "targetName": "",
+    "members": 0,
+    "addedToday": 0,
+    "pending": 0,
+    "totalTarget": 0,
+    "durationMin": 0,
+    "startedAt": 0,
+    "lastAddAt": 0,
+    "dayKey": ""
+  },
+  "filters": {
+    "minUye": 0
+  },
+  "blacklist": [],
+  "invites": [],
+  "stats": {
+    "commands": 0,
+    "broadcastSent": 0,
+    "dmSent": 0,
+    "joins": 0,
+    "startedAt": 0
+  }
+}

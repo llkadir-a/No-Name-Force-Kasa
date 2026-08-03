@@ -2,22 +2,22 @@
   "name": "Ototext Bot — Prefix Komutlar",
   "active": false,
   "id": "7e4cfc9c-fce6-417b-bec1-e938275b944b",
-  "versionId": "03aad10d-221d-422c-bd35-0e42f37c9439",
+  "versionId": "7f6bf0c9-7b3e-4771-b0c3-9492c1df4fc4",
   "nodes": [
     {
       "parameters": {
-        "content": "## Ototext WhatsApp Bot\nPrefix komutlar + sayfalı gruplar + blacklist.\n\n**Prefix:** `$env.BOT_PREFIX` (varsayılan `/`)\n**Adminler:** `$env.BOT_ADMINS`\n\n`/groups [sayfa]` — id, isim, üye (sayfalı)\n`/blacklist <id|no>` — gruba mesaj atma\n`/unblacklist <id|no>` — listeden çıkar\n`/blacklist` — kara listeyi göster\n`/broadcast` kara listedekileri atlar",
-        "height": 380,
-        "width": 420,
+        "content": "## Ototext ! komut botu\nPrefix: `!`\nState: `/workspace/data/ototext-state.json`\nWorker her 1 dk yayın/DM/mining işler.\nBot numarası otomatik admin.",
+        "height": 320,
+        "width": 400,
         "color": 5
       },
       "id": "sticky-bot",
-      "name": "Ototext Bot",
+      "name": "Ototext",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -480,
-        120
+        -420,
+        160
       ]
     },
     {
@@ -39,14 +39,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const prefix = ($env.BOT_PREFIX || '/').toString();\nconst adminsRaw = ($env.BOT_ADMINS || '').toString();\nconst admins = adminsRaw.split(/[,;\\s]+/).map(s => s.trim()).filter(Boolean);\n\nconst body = $json.body && typeof $json.body === 'object' ? $json.body : $json;\n\nif (body.typeWebhook && body.typeWebhook !== 'incomingMessageReceived') {\n  return [];\n}\n\nconst messageData = body.messageData || {};\nconst typeMessage = messageData.typeMessage || '';\nlet text = '';\nif (typeMessage === 'textMessage') {\n  text = messageData.textMessageData?.textMessage || '';\n} else if (typeMessage === 'extendedTextMessage') {\n  text = messageData.extendedTextMessageData?.text || '';\n} else {\n  return [];\n}\n\ntext = String(text || '').trim();\nif (!text.startsWith(prefix)) {\n  return [];\n}\n\nconst rest = text.slice(prefix.length).trim();\nif (!rest) {\n  return [];\n}\n\nconst parts = rest.split(/\\s+/);\nconst command = (parts[0] || '').toLowerCase();\nconst args = rest.slice(parts[0].length).trim();\n\nconst chatId = body.senderData?.chatId || '';\nconst sender = body.senderData?.sender || chatId;\nconst isAdmin = admins.length === 0 || admins.includes(sender) || admins.includes(chatId);\n\nconst groups = ($env.BROADCAST_GROUPS || '')\n  .toString()\n  .split(/[,;\\s]+/)\n  .map(s => s.trim())\n  .filter(Boolean);\n\nreturn [{\n  json: {\n    command,\n    args,\n    text,\n    prefix,\n    chatId,\n    sender,\n    isAdmin,\n    senderName: body.senderData?.senderName || '',\n    idMessage: body.idMessage || '',\n    groups,\n    instanceId: $env.ID_INSTANCE || '',\n  }\n}];"
+        "jsCode": "\nconst STATE_PATH = '/workspace/data/ototext-state.json';\nconst fs = require('fs');\nconst path = require('path');\n\nfunction loadState() {\n  try {\n    const raw = fs.readFileSync(STATE_PATH, 'utf8');\n    return JSON.parse(raw);\n  } catch (e) {\n    return null;\n  }\n}\n\nfunction saveState(state) {\n  fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });\n  fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));\n}\n\nfunction defaultState() {\n  return {\n    admins: [],\n    botWid: '',\n    broadcast: { running: false, text: '', intervalMin: 3, index: 0, sent: 0, lastSendAt: 0, startedAt: 0, cycle: 0 },\n    dm: { running: false, text: '', groupId: '', intervalMin: 3, queue: [], index: 0, sent: 0, failed: 0, lastSendAt: 0, startedAt: 0 },\n    mining: { running: false, targetGroupId: '', targetName: '', members: 0, addedToday: 0, pending: 0, totalTarget: 0, durationMin: 0, startedAt: 0, lastAddAt: 0, dayKey: '' },\n    filters: { minUye: 0 },\n    blacklist: [],\n    invites: [],\n    stats: { commands: 0, broadcastSent: 0, dmSent: 0, joins: 0, startedAt: Date.now() },\n  };\n}\n\nfunction ensureState() {\n  let s = loadState();\n  if (!s) s = defaultState();\n  s.admins = Array.isArray(s.admins) ? s.admins : [];\n  s.blacklist = Array.isArray(s.blacklist) ? s.blacklist : [];\n  s.invites = Array.isArray(s.invites) ? s.invites : [];\n  s.filters = s.filters || { minUye: 0 };\n  s.broadcast = Object.assign(defaultState().broadcast, s.broadcast || {});\n  s.dm = Object.assign(defaultState().dm, s.dm || {});\n  s.mining = Object.assign(defaultState().mining, s.mining || {});\n  s.stats = Object.assign(defaultState().stats, s.stats || {});\n  return s;\n}\n\nfunction normId(raw) {\n  if (!raw) return '';\n  let v = String(raw).trim().replace(/^@/, '').replace(/[()]/g, '');\n  if (!v) return '';\n  if (v.includes('@')) return v;\n  const digits = v.replace(/\\D/g, '');\n  if (!digits) return v;\n  let d = digits;\n  if (d.startsWith('0') && d.length === 11) d = '90' + d.slice(1);\n  return d + '@c.us';\n}\n\nfunction extractInviteLinks(text) {\n  const re = /https?:\\/\\/chat\\.whatsapp\\.com\\/[A-Za-z0-9_-]+/g;\n  return Array.from(new Set((text || '').match(re) || []));\n}\n\nasync function api(method, endpoint, body) {\n  const instance = $env.ID_INSTANCE;\n  const token = $env.API_TOKEN;\n  let url = `https://api.green-api.com/waInstance${instance}/${endpoint}/${token}`;\n  if (method === 'GET' && body && typeof body === 'object') {\n    const qs = new URLSearchParams(body).toString();\n    if (qs) url += `?${qs}`;\n    body = undefined;\n  }\n  const opts = { method, url, json: true };\n  if (body !== undefined) opts.body = body;\n  return this.helpers.httpRequest(opts);\n}\n\nasync function ensureBotAdmin(state, incomingWid) {\n  const envAdmins = String($env.BOT_ADMINS || '')\n    .split(/[,;\\s]+/)\n    .map((x) => normId(x))\n    .filter(Boolean);\n  for (const a of envAdmins) {\n    if (!state.admins.includes(a)) state.admins.push(a);\n  }\n  if (incomingWid) state.botWid = normId(incomingWid) || state.botWid;\n  if (!state.botWid) {\n    try {\n      const settings = await api.call(this, 'GET', 'getSettings');\n      state.botWid = settings.wid || settings.phone || '';\n    } catch (e) {}\n  }\n  if (state.botWid && !state.admins.includes(state.botWid)) {\n    state.admins.push(state.botWid);\n  }\n}\n\nfunction isAdmin(state, sender, chatId) {\n  const s = normId(sender);\n  const c = normId(chatId);\n  return state.admins.includes(s) || state.admins.includes(c);\n}\n\nfunction parseDm(args) {\n  const m = args.match(/^(?:\\()?([\\s\\S]+?)(?:\\))?\\.\\s*(?:\\()?([^\\s)]+@g\\.us)(?:\\))?\\s*$/);\n  if (m) return { text: m[1].trim(), groupId: m[2].trim() };\n  const parts = args.trim().split(/\\s+/);\n  const last = (parts[parts.length - 1] || '').replace(/[()]/g, '');\n  if (last.endsWith('@g.us')) {\n    return { text: parts.slice(0, -1).join(' ').replace(/^\\(|\\)$/g, ''), groupId: last };\n  }\n  return null;\n}\n\nasync function listGroupsPage(state, page) {\n  const PAGE = 10;\n  let chats;\n  try {\n    chats = await api.call(this, 'GET', 'getChats', { count: '500' });\n  } catch (e) {\n    chats = await api.call(this, 'POST', 'getChats', { count: 500 });\n  }\n  if (Array.isArray(chats) === false && chats && Array.isArray(chats.chats)) chats = chats.chats;\n  const groups = (Array.isArray(chats) ? chats : [])\n    .filter((c) => c && (c.type === 'group' || String(c.id || '').endsWith('@g.us')))\n    .map((c) => ({ id: c.id, name: c.name || c.id }));\n  groups.sort((a, b) => String(a.name).localeCompare(String(b.name), 'tr'));\n\n  const total = groups.length;\n  const totalPages = Math.max(1, Math.ceil(total / PAGE) || 1);\n  const safe = Math.min(Math.max(1, page), totalPages);\n  const start = (safe - 1) * PAGE;\n  const slice = groups.slice(start, start + PAGE);\n  const enriched = [];\n  for (let i = 0; i < slice.length; i++) {\n    const g = slice[i];\n    let members = '?';\n    let subject = g.name;\n    try {\n      const data = await api.call(this, 'POST', 'getGroupData', { groupId: g.id });\n      subject = data.subject || g.name;\n      members = typeof data.size === 'number' ? data.size : (data.participants || []).length;\n    } catch (e) {}\n    enriched.push({\n      no: start + i + 1,\n      id: g.id,\n      name: subject,\n      members,\n      blocked: state.blacklist.includes(g.id),\n    });\n  }\n  state.lastGroupsPage = { page: safe, totalPages, items: enriched, total };\n  return { enriched, safe, totalPages, total };\n}\n\nconst body = $json.body && typeof $json.body === 'object' ? $json.body : $json;\nconst state = ensureState();\nawait ensureBotAdmin.call(this, state, body.instanceData?.wid);\n\n// Capture invite links from any incoming message\nif (body.typeWebhook === 'incomingMessageReceived') {\n  const md = body.messageData || {};\n  let text = '';\n  if (md.typeMessage === 'textMessage') text = md.textMessageData?.textMessage || '';\n  if (md.typeMessage === 'extendedTextMessage') text = md.extendedTextMessageData?.text || '';\n  if (md.typeMessage === 'groupInviteMessage') {\n    const d = md.groupInviteMessageData || {};\n    const link = d.inviteCode ? `https://chat.whatsapp.com/${d.inviteCode}` : '';\n    if (link) {\n      state.invites.unshift({\n        link,\n        groupName: d.groupName || '',\n        groupJid: d.groupJid || '',\n        from: body.senderData?.sender || '',\n        at: Date.now(),\n      });\n      state.invites = state.invites.slice(0, 200);\n      saveState(state);\n    }\n  }\n  for (const link of extractInviteLinks(text)) {\n    if (!state.invites.some((x) => x.link === link)) {\n      state.invites.unshift({ link, groupName: '', groupJid: '', from: body.senderData?.sender || '', at: Date.now() });\n    }\n  }\n  state.invites = state.invites.slice(0, 200);\n}\n\nif (body.typeWebhook && body.typeWebhook !== 'incomingMessageReceived') {\n  saveState(state);\n  return [];\n}\n\nconst md = body.messageData || {};\nlet text = '';\nif (md.typeMessage === 'textMessage') text = md.textMessageData?.textMessage || '';\nelse if (md.typeMessage === 'extendedTextMessage') text = md.extendedTextMessageData?.text || '';\nelse {\n  saveState(state);\n  return [];\n}\ntext = String(text || '').trim();\nconst prefix = ($env.BOT_PREFIX || '!').toString();\nif (!text.startsWith(prefix)) {\n  saveState(state);\n  return [];\n}\n\nconst rest = text.slice(prefix.length).trim();\nconst parts = rest.split(/\\s+/);\nconst command = (parts[0] || '').toLowerCase();\nconst args = rest.slice(parts[0].length).trim();\nconst chatId = body.senderData?.chatId || '';\nconst sender = body.senderData?.sender || chatId;\n\nif (!isAdmin(state, sender, chatId)) {\n  saveState(state);\n  return [{ json: { chatId, reply: '⛔ Yetkisiz. Sadece adminler Ototext kullanabilir.' } }];\n}\n\nstate.stats.commands = (state.stats.commands || 0) + 1;\nlet reply = '';\n\ntry {\n  switch (command) {\n    case 'yardim':\n    case 'help': {\n      reply = [\n        '*Ototext — Ana Menü*',\n        '',\n        `${prefix}otox (metin) — otomatik yayını başlat`,\n        `${prefix}durdur / ${prefix}durum / ${prefix}sure N`,\n        `${prefix}dm (metin). (grupId) — gruptakilere DM`,\n        `${prefix}dm-durdur / ${prefix}dm-sure / ${prefix}dm-durum`,\n        `${prefix}gruplar [sayfa] — 10’ar grup`,\n        `${prefix}davetler — gelen davet linkleri`,\n        `${prefix}filtre / ${prefix}min-uye N / ${prefix}temizlik`,\n        `${prefix}black — kara liste menüsü`,\n        `${prefix}mining — üye ekleme menüsü`,\n        `${prefix}katil (link) / ${prefix}tumkatil (link...)`,\n        `${prefix}karakter ayarla (isim)`,\n        `${prefix}admin — admin menüsü`,\n        `${prefix}istatistik`,\n      ].join('\\n');\n      break;\n    }\n    case 'otox': {\n      if (!args) { reply = `Kullanım: ${prefix}otox (metin)`; break; }\n      state.broadcast.running = true;\n      state.broadcast.text = args;\n      state.broadcast.index = 0;\n      state.broadcast.sent = 0;\n      state.broadcast.startedAt = Date.now();\n      state.broadcast.lastSendAt = 0;\n      reply = `▶️ Otomatik yayın başladı.\\nSüre: ${state.broadcast.intervalMin} dk\\nMetin: ${args.slice(0, 120)}`;\n      break;\n    }\n    case 'durdur': {\n      state.broadcast.running = false;\n      reply = `⏹ Yayın durduruldu.\\nGönderilen: ${state.broadcast.sent}`;\n      break;\n    }\n    case 'durum': {\n      const b = state.broadcast;\n      reply = [\n        '*📡 Yayın Durumu*',\n        `Durum: ${b.running ? 'ÇALIŞIYOR' : 'DURDU'}`,\n        `Süre aralığı: ${b.intervalMin} dk`,\n        `Gönderilen: ${b.sent}`,\n        `Index: ${b.index}`,\n        `Metin: ${(b.text || '-').slice(0, 160)}`,\n        `Min üye filtresi: ${state.filters.minUye || 0}`,\n        `Blacklist: ${state.blacklist.length}`,\n      ].join('\\n');\n      break;\n    }\n    case 'sure': {\n      const mins = parseFloat(String(args).replace(',', '.').replace(/\\.$/, ''));\n      if (!Number.isFinite(mins) || mins <= 0) { reply = `Kullanım: ${prefix}sure 3`; break; }\n      state.broadcast.intervalMin = mins;\n      reply = `⏱ Yayın aralığı ${mins} dakika olarak ayarlandı.`;\n      break;\n    }\n    case 'dm': {\n      const parsed = parseDm(args);\n      if (!parsed || !parsed.text || !parsed.groupId) {\n        reply = `Kullanım: ${prefix}dm (metin). (grupId)\\nÖrnek: ${prefix}dm Merhaba. 120363xxx@g.us`;\n        break;\n      }\n      const data = await api.call(this, 'POST', 'getGroupData', { groupId: parsed.groupId });\n      const participants = (data.participants || []).map((p) => p.id).filter(Boolean);\n      const me = state.botWid;\n      const queue = participants.filter((id) => id !== me && String(id).endsWith('@c.us'));\n      state.dm = {\n        running: true,\n        text: parsed.text,\n        groupId: parsed.groupId,\n        intervalMin: state.dm.intervalMin || 3,\n        queue,\n        index: 0,\n        sent: 0,\n        failed: 0,\n        lastSendAt: 0,\n        startedAt: Date.now(),\n      };\n      reply = `✉️ DM başladı.\\nGrup: ${data.subject || parsed.groupId}\\nKuyruk: ${queue.length}\\nAralık: ${state.dm.intervalMin} dk`;\n      break;\n    }\n    case 'dm-durdur': {\n      state.dm.running = false;\n      reply = `⏹ DM durduruldu.\\nGönderilen: ${state.dm.sent}/${(state.dm.queue || []).length}\\nHata: ${state.dm.failed}`;\n      break;\n    }\n    case 'dm-sure': {\n      const mins = parseFloat(String(args).replace(',', '.').replace(/\\.$/, ''));\n      if (!Number.isFinite(mins) || mins <= 0) { reply = `Kullanım: ${prefix}dm-sure 3`; break; }\n      state.dm.intervalMin = mins;\n      reply = `⏱ DM aralığı ${mins} dakika.`;\n      break;\n    }\n    case 'dm-durum': {\n      const d = state.dm;\n      const total = (d.queue || []).length;\n      reply = [\n        '*✉️ DM Durumu*',\n        `Durum: ${d.running ? 'ÇALIŞIYOR' : 'DURDU'}`,\n        `Grup: ${d.groupId || '-'}`,\n        `Gönderilen DM: ${d.sent}`,\n        `Kalan: ${Math.max(0, total - d.index)}`,\n        `Hata: ${d.failed}`,\n        `Aralık: ${d.intervalMin} dk`,\n        `Metin: ${(d.text || '-').slice(0, 120)}`,\n      ].join('\\n');\n      break;\n    }\n    case 'gruplar': {\n      const page = Math.max(1, parseInt(args || '1', 10) || 1);\n      const { enriched, safe, totalPages, total } = await listGroupsPage.call(this, state, page);\n      if (!total) { reply = '📋 Grup bulunamadı.'; break; }\n      const lines = [`📋 *Gruplar* ${safe}/${totalPages} (toplam ${total})`, ''];\n      for (const g of enriched) {\n        lines.push(`${g.no}. ${g.name}${g.blocked ? ' 🚫' : ''}`);\n        lines.push(`   👥 ${g.members}  |  🆔 ${g.id}`);\n      }\n      if (safe < totalPages) lines.push('', `Sonraki: ${prefix}gruplar ${safe + 1}`);\n      if (safe > 1) lines.push(`Önceki: ${prefix}gruplar ${safe - 1}`);\n      reply = lines.join('\\n');\n      break;\n    }\n    case 'davetler': {\n      if (!state.invites.length) { reply = '🔗 Kayıtlı davet linki yok.'; break; }\n      const lines = [`🔗 *Davetler* (${state.invites.length})`, ''];\n      state.invites.slice(0, 30).forEach((inv, i) => {\n        lines.push(`${i + 1}. ${inv.groupName || 'Grup'}`);\n        lines.push(`   ${inv.link}`);\n      });\n      reply = lines.join('\\n');\n      break;\n    }\n    case 'filtre': {\n      reply = [\n        '*🧪 Filtre Menüsü*',\n        `${prefix}min-uye 500 — minimum üye`,\n        `${prefix}min-uye 30`,\n        `${prefix}temizlik — filtreleri sıfırla`,\n        '',\n        `Aktif min-uye: ${state.filters.minUye || 0}`,\n      ].join('\\n');\n      break;\n    }\n    case 'min-uye': {\n      const n = parseInt(args, 10);\n      if (!Number.isFinite(n) || n < 0) { reply = `Kullanım: ${prefix}min-uye 500`; break; }\n      state.filters.minUye = n;\n      reply = `✅ Minimum üye filtresi: ${n}`;\n      break;\n    }\n    case 'temizlik': {\n      state.filters = { minUye: 0 };\n      reply = '🧹 Filtreler temizlendi.';\n      break;\n    }\n    case 'black': {\n      reply = [\n        '*🚫 Black Menü*',\n        `${prefix}black-ekle (id)`,\n        `${prefix}black-cikar (id)`,\n        `${prefix}black-liste`,\n      ].join('\\n');\n      break;\n    }\n    case 'black-ekle': {\n      let id = (args || '').trim().replace(/[()]/g, '');\n      if (/^\\d+$/.test(id) && state.lastGroupsPage?.items) {\n        const hit = state.lastGroupsPage.items.find((x) => x.no === parseInt(id, 10));\n        if (hit) id = hit.id;\n      }\n      if (!id.endsWith('@g.us')) { reply = `Kullanım: ${prefix}black-ekle 120363...@g.us`; break; }\n      if (!state.blacklist.includes(id)) state.blacklist.push(id);\n      reply = `🚫 Eklendi:\\n${id}`;\n      break;\n    }\n    case 'black-cikar': {\n      let id = (args || '').trim().replace(/[()]/g, '');\n      if (/^\\d+$/.test(id)) {\n        const n = parseInt(id, 10);\n        if (state.blacklist[n - 1]) id = state.blacklist[n - 1];\n      }\n      state.blacklist = state.blacklist.filter((x) => x !== id);\n      reply = `✅ Çıkarıldı:\\n${id}`;\n      break;\n    }\n    case 'black-liste': {\n      if (!state.blacklist.length) { reply = '🚫 Black list boş.'; break; }\n      const lines = [`🚫 *Black List* (${state.blacklist.length})`, ''];\n      for (let i = 0; i < state.blacklist.length; i++) {\n        const id = state.blacklist[i];\n        let name = id;\n        try {\n          const data = await api.call(this, 'POST', 'getGroupData', { groupId: id });\n          name = data.subject || id;\n        } catch (e) {}\n        lines.push(`${i + 1}. ${name}`);\n        lines.push(`   🆔 ${id}`);\n      }\n      reply = lines.join('\\n');\n      break;\n    }\n    case 'mining': {\n      reply = [\n        '*⛏️ Mining Menü*',\n        `${prefix}mining-baslat (hedefGrupId)`,\n        `${prefix}mining-durdur`,\n        `${prefix}mining-durum`,\n      ].join('\\n');\n      break;\n    }\n    case 'mining-baslat': {\n      const id = (args || '').trim().replace(/[()]/g, '');\n      if (!id.endsWith('@g.us')) { reply = `Kullanım: ${prefix}mining-baslat 120363...@g.us`; break; }\n      let name = id;\n      let members = 0;\n      try {\n        const data = await api.call(this, 'POST', 'getGroupData', { groupId: id });\n        name = data.subject || id;\n        members = typeof data.size === 'number' ? data.size : (data.participants || []).length;\n      } catch (e) {}\n      const dayKey = new Date().toISOString().slice(0, 10);\n      state.mining = {\n        running: true,\n        targetGroupId: id,\n        targetName: name,\n        members,\n        addedToday: state.mining.dayKey === dayKey ? (state.mining.addedToday || 0) : 0,\n        pending: 0,\n        totalTarget: Math.max(members + 50, 100),\n        durationMin: 0,\n        startedAt: Date.now(),\n        lastAddAt: 0,\n        dayKey,\n      };\n      reply = `⛏️ Mining başladı.\\nHedef: ${name}\\nÜye: ${members}`;\n      break;\n    }\n    case 'mining-durdur': {\n      state.mining.running = false;\n      reply = '⏹ Mining durduruldu.';\n      break;\n    }\n    case 'mining-durum': {\n      const m = state.mining;\n      const dur = m.startedAt ? Math.round((Date.now() - m.startedAt) / 60000) : 0;\n      reply = [\n        '*⛏️ Mining Durum*',\n        `Durum: ${m.running ? 'ÇALIŞIYOR' : 'DURDU'}`,\n        `Hedef: ${m.targetName || '-'}`,\n        `Üye: ${m.members}`,\n        `Bugün eklenen: ${m.addedToday}`,\n        `Eklenecek (pending): ${m.pending}`,\n        `Toplam hedef: ${m.totalTarget}`,\n        `Süre: ${dur} dk`,\n        `ID: ${m.targetGroupId || '-'}`,\n      ].join('\\n');\n      break;\n    }\n    case 'katil': {\n      const link = extractInviteLinks(args)[0] || args.trim();\n      if (!link.includes('chat.whatsapp.com')) { reply = `Kullanım: ${prefix}katil https://chat.whatsapp.com/...`; break; }\n      try {\n        const res = await api.call(this, 'POST', 'joinGroup', { inviteLink: link });\n        state.stats.joins += 1;\n        reply = `✅ Katılma isteği gönderildi.\\n${link}\\n${JSON.stringify(res).slice(0, 180)}`;\n      } catch (e) {\n        reply = `⚠️ joinGroup başarısız: ${e.message || e}\\nLink kaydedildi (!davetler).`;\n        if (!state.invites.some((x) => x.link === link)) {\n          state.invites.unshift({ link, groupName: '', groupJid: '', from: sender, at: Date.now() });\n        }\n      }\n      break;\n    }\n    case 'tumkatil': {\n      const links = extractInviteLinks(args);\n      if (!links.length) { reply = `Kullanım: ${prefix}tumkatil (link) (link) ...`; break; }\n      const results = [];\n      for (const link of links) {\n        try {\n          await api.call(this, 'POST', 'joinGroup', { inviteLink: link });\n          state.stats.joins += 1;\n          results.push(`✅ ${link}`);\n        } catch (e) {\n          results.push(`⚠️ ${link} → ${e.message || e}`);\n        }\n      }\n      reply = `*Toplu katıl* (${links.length})\\n` + results.join('\\n');\n      break;\n    }\n    case 'karakter': {\n      const m = args.match(/^ayarla\\s+(.+)$/i);\n      if (!m) { reply = `Kullanım: ${prefix}karakter ayarla (isim)`; break; }\n      const name = m[1].trim();\n      try {\n        const res = await api.call(this, 'POST', 'setProfileName', { name });\n        reply = `✅ İsim güncellendi: ${name}\\n${JSON.stringify(res).slice(0, 120)}`;\n      } catch (e1) {\n        try {\n          const res = await api.call(this, 'POST', 'setSettings', { name });\n          reply = `✅ setSettings ile isim denendi: ${name}`;\n        } catch (e2) {\n          reply = `⚠️ İsim değiştirilemedi: ${e1.message || e1}`;\n        }\n      }\n      break;\n    }\n    case 'admin': {\n      reply = [\n        '*👑 Admin Menü*',\n        `${prefix}admin-ekle @kullanici`,\n        `${prefix}admin-cikar @kullanici`,\n        `${prefix}admin-list`,\n        '',\n        'Bot numarası otomatik admindir.',\n      ].join('\\n');\n      break;\n    }\n    case 'admin-ekle': {\n      const id = normId(args);\n      if (!id) { reply = `Kullanım: ${prefix}admin-ekle 905xxxxxxxxx`; break; }\n      if (!state.admins.includes(id)) state.admins.push(id);\n      reply = `👑 Admin eklendi:\\n${id}`;\n      break;\n    }\n    case 'admin-cikar': {\n      const id = normId(args);\n      if (id && id === state.botWid) { reply = 'Bot numarası adminlikten çıkarılamaz.'; break; }\n      state.admins = state.admins.filter((x) => x !== id);\n      reply = `✅ Admin çıkarıldı:\\n${id}`;\n      break;\n    }\n    case 'admin-list': {\n      const lines = [`*👑 Adminler* (${state.admins.length})`, ''];\n      state.admins.forEach((a, i) => lines.push(`${i + 1}. ${a}${a === state.botWid ? ' (bot)' : ''}`));\n      reply = lines.join('\\n');\n      break;\n    }\n    case 'istatistik': {\n      const s = state.stats;\n      reply = [\n        '*📊 Ototext İstatistik*',\n        `Komutlar: ${s.commands}`,\n        `Yayın mesajı: ${s.broadcastSent}`,\n        `DM: ${s.dmSent}`,\n        `Katılma: ${s.joins}`,\n        `Blacklist: ${state.blacklist.length}`,\n        `Davet kaydı: ${state.invites.length}`,\n        `Yayın: ${state.broadcast.running ? 'ON' : 'OFF'}`,\n        `DM: ${state.dm.running ? 'ON' : 'OFF'}`,\n        `Mining: ${state.mining.running ? 'ON' : 'OFF'}`,\n      ].join('\\n');\n      break;\n    }\n    default:\n      reply = `❓ Bilinmeyen komut: ${command}\\n${prefix}yardim`;\n  }\n} catch (e) {\n  reply = `⚠️ Hata: ${e.message || e}`;\n}\n\nsaveState(state);\nreturn [{ json: { chatId, reply, command, sender } }];\n"
       },
-      "id": "parse-command",
-      "name": "Parse Prefix Command",
+      "id": "handle-cmd",
+      "name": "Handle ! Commands",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        260,
+        280,
         360
       ]
     },
@@ -61,8 +61,8 @@
           },
           "conditions": [
             {
-              "id": "has-command",
-              "leftValue": "={{ $json.command }}",
+              "id": "has-reply",
+              "leftValue": "={{ $json.reply }}",
               "rightValue": "",
               "operator": {
                 "type": "string",
@@ -74,527 +74,13 @@
         },
         "options": {}
       },
-      "id": "if-has-command",
-      "name": "Has Command?",
+      "id": "if-reply",
+      "name": "Has Reply?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        500,
+        540,
         360
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "is-admin",
-              "leftValue": "={{ $json.isAdmin }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "if-admin",
-      "name": "Is Admin?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        740,
-        280
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "return [{\n  json: {\n    chatId: $json.chatId,\n    reply: '⛔ Yetkisiz. Bu Ototext komutu sadece admin numaralarına açık.'\n  }\n}];"
-      },
-      "id": "deny-msg",
-      "name": "Unauthorized Reply",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        980,
-        480
-      ]
-    },
-    {
-      "parameters": {
-        "rules": {
-          "values": [
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": false,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $json.command }}",
-                    "rightValue": "help",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "id": "c-help"
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "help"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": false,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $json.command }}",
-                    "rightValue": "ping",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "id": "c-ping"
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "ping"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": false,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $json.command }}",
-                    "rightValue": "status",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "id": "c-status"
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "status"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": false,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $json.command }}",
-                    "rightValue": "id",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "id": "c-id"
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "id"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": false,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $json.command }}",
-                    "rightValue": "groups",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "id": "c-groups"
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "groups"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": false,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $json.command }}",
-                    "rightValue": "broadcast",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "id": "c-broadcast"
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "broadcast"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": false,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $json.command }}",
-                    "rightValue": "sync",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "id": "c-sync"
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "sync"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": false,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $json.command }}",
-                    "rightValue": "blacklist",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "id": "c-blacklist"
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "blacklist"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": false,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $json.command }}",
-                    "rightValue": "unblacklist",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "id": "c-unblacklist"
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "unblacklist"
-            }
-          ]
-        },
-        "options": {
-          "fallbackOutput": "extra"
-        }
-      },
-      "id": "switch-cmd",
-      "name": "Route Command",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3.2,
-      "position": [
-        980,
-        200
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const p = $json.prefix || '/';\nconst reply = [\n  '*Ototext Bot*',\n  '',\n  `${p}help — komut listesi`,\n  `${p}ping — bot ayakta mı`,\n  `${p}status — Green API durumu`,\n  `${p}id — chatId / sender`,\n  `${p}groups [sayfa] — gruplar (id, isim, üye)`,\n  `${p}blacklist — kara listeyi göster`,\n  `${p}blacklist <id|no> — gruba mesaj gönderme`,\n  `${p}unblacklist <id|no> — kara listeden çıkar`,\n  `${p}broadcast <mesaj> — gruplara gönder (blacklist hariç)`,\n  `${p}sync — sync bilgilendirmesi`,\n].join('\\n');\nreturn [{ json: { chatId: $json.chatId, reply } }];"
-      },
-      "id": "cmd-help",
-      "name": "Help Text",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1280,
-        -40
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "return [{ json: { chatId: $json.chatId, reply: '🏓 pong — Ototext aktif' } }];"
-      },
-      "id": "cmd-ping",
-      "name": "Ping Text",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1280,
-        100
-      ]
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "=https://api.green-api.com/waInstance{{ $env.ID_INSTANCE }}/getStateInstance/{{ $env.API_TOKEN }}",
-        "options": {
-          "timeout": 20000
-        }
-      },
-      "id": "http-status",
-      "name": "Green API Status",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1280,
-        240
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "const prev = $('Route Command').item.json;\nconst state = $json.stateInstance || JSON.stringify($json);\nreturn [{\n  json: {\n    chatId: prev.chatId,\n    reply: `📡 Ototext status\\ninstance: ${prev.instanceId}\\nstate: ${state}`\n  }\n}];"
-      },
-      "id": "status-text",
-      "name": "Status Text",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1520,
-        240
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "return [{\n  json: {\n    chatId: $json.chatId,\n    reply: `🆔 chatId: ${$json.chatId}\\nsender: ${$json.sender}\\nname: ${$json.senderName || '-'}`\n  }\n}];"
-      },
-      "id": "cmd-id",
-      "name": "Id Text",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1280,
-        380
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const prev = $json;\nconst PAGE_SIZE = 5;\nconst prefix = prev.prefix || '/';\ntry {\n  const pageArg = (prev.args || '').trim();\n  const page = Math.max(1, parseInt(pageArg || '1', 10) || 1);\n\n  const staticData = $getWorkflowStaticData('global');\n  staticData.blacklist = Array.isArray(staticData.blacklist) ? staticData.blacklist : [];\n  const blacklist = new Set(staticData.blacklist);\n\n  const instance = $env.ID_INSTANCE;\n  const token = $env.API_TOKEN;\n  if (!instance || !token || instance === 'YOUR_INSTANCE_ID') {\n    return [{ json: { chatId: prev.chatId, reply: '⚠️ Green API credential eksik. Mobil kurulum formunu doldur.' } }];\n  }\n  const base = `https://api.green-api.com/waInstance${instance}`;\n\n  let chats;\n  try {\n    chats = await this.helpers.httpRequest({\n      method: 'GET',\n      url: `${base}/getChats/${token}`,\n      qs: { count: 500 },\n      json: true,\n    });\n  } catch (e1) {\n    // some instances expect POST\n    chats = await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${base}/getChats/${token}`,\n      body: { count: 500 },\n      json: true,\n    });\n  }\n\n  const list = Array.isArray(chats) ? chats : [];\n  const groups = list\n    .filter((c) => c && (c.type === 'group' || String(c.id || '').endsWith('@g.us')))\n    .map((c) => ({ id: c.id, name: c.name || c.id }))\n    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'tr'));\n\n  const total = groups.length;\n  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE) || 1);\n  const safePage = Math.min(page, totalPages);\n  const start = (safePage - 1) * PAGE_SIZE;\n  const slice = groups.slice(start, start + PAGE_SIZE);\n\n  const enriched = [];\n  for (let i = 0; i < slice.length; i++) {\n    const g = slice[i];\n    let members = '?';\n    let subject = g.name;\n    try {\n      const data = await this.helpers.httpRequest({\n        method: 'POST',\n        url: `${base}/getGroupData/${token}`,\n        body: { groupId: g.id },\n        json: true,\n      });\n      subject = data.subject || g.name || g.id;\n      if (typeof data.size === 'number') members = data.size;\n      else if (Array.isArray(data.participants)) members = data.participants.length;\n    } catch (e) {}\n    enriched.push({\n      no: start + i + 1,\n      id: g.id,\n      name: subject,\n      members,\n      blocked: blacklist.has(g.id),\n    });\n  }\n\n  staticData.lastGroupsPage = { page: safePage, totalPages, items: enriched };\n\n  if (!total) {\n    return [{ json: { chatId: prev.chatId, reply: '📋 Hiç grup bulunamadı.' } }];\n  }\n\n  const lines = [\n    `📋 *Gruplar* — sayfa ${safePage}/${totalPages} (toplam ${total})`,\n    '',\n  ];\n  for (const g of enriched) {\n    const flag = g.blocked ? ' 🚫' : '';\n    lines.push(`${g.no}. ${g.name}${flag}`);\n    lines.push(`   👥 ${g.members} üye`);\n    lines.push(`   🆔 ${g.id}`);\n    lines.push('');\n  }\n  if (safePage < totalPages) lines.push(`Sonraki: ${prefix}groups ${safePage + 1}`);\n  if (safePage > 1) lines.push(`Önceki: ${prefix}groups ${safePage - 1}`);\n  lines.push(`Kara liste: ${prefix}blacklist <no|id>`);\n\n  return [{ json: { chatId: prev.chatId, reply: lines.join('\\n').trim() } }];\n} catch (e) {\n  const msg = (e && (e.message || e.description || String(e))) || 'unknown';\n  return [{ json: { chatId: prev.chatId, reply: `⚠️ Grup listesi alınamadı.\\n${msg}` } }];\n}\n"
-      },
-      "id": "cmd-groups",
-      "name": "Groups Text",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1280,
-        520
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const msg = ($json.args || '').trim();\nconst prev = $json;\nconst staticData = $getWorkflowStaticData('global');\nconst blacklist = new Set(Array.isArray(staticData.blacklist) ? staticData.blacklist : []);\n\nif (!msg) {\n  return [{ json: { chatId: prev.chatId, reply: `Kullanım: ${prev.prefix}broadcast <mesaj>`, skipBroadcast: true } }];\n}\n\nlet groups = (prev.groups || []).filter(Boolean);\n\nif (!groups.length) {\n  // fallback: all groups from WhatsApp account\n  const instance = $env.ID_INSTANCE;\n  const token = $env.API_TOKEN;\n  const chats = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://api.green-api.com/waInstance${instance}/getChats/${token}`,\n    qs: { count: 500 },\n    json: true,\n  });\n  groups = (Array.isArray(chats) ? chats : [])\n    .filter((c) => c && (c.type === 'group' || String(c.id || '').endsWith('@g.us')))\n    .map((c) => c.id);\n}\n\nconst skipped = groups.filter((g) => blacklist.has(g));\ngroups = groups.filter((g) => !blacklist.has(g));\n\nif (!groups.length) {\n  return [{ json: { chatId: prev.chatId, reply: `Gönderilecek grup yok.\\nKara listede: ${skipped.length}`, skipBroadcast: true } }];\n}\n\nreturn groups.map((chatId, index) => ({\n  json: {\n    index: index + 1,\n    total: groups.length,\n    skipped: skipped.length,\n    targetChatId: chatId,\n    message: msg,\n    replyChatId: prev.chatId,\n    skipBroadcast: false,\n  }\n}));"
-      },
-      "id": "cmd-broadcast",
-      "name": "Broadcast Prepare",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1280,
-        680
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "do-bcast",
-              "leftValue": "={{ $json.skipBroadcast }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "if-skip-bcast",
-      "name": "Skip Broadcast?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        1520,
-        680
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "return [{ json: { chatId: $json.chatId || $json.replyChatId, reply: $json.reply } }];"
-      },
-      "id": "bcast-error-text",
-      "name": "Broadcast Error Text",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1760,
-        560
-      ]
-    },
-    {
-      "parameters": {
-        "batchSize": 1,
-        "options": {}
-      },
-      "id": "loop-bcast",
-      "name": "Loop Broadcast",
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
-      "position": [
-        1760,
-        760
-      ]
-    },
-    {
-      "parameters": {
-        "amount": 2,
-        "unit": "seconds"
-      },
-      "id": "wait-bcast",
-      "name": "Wait 2s",
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1.1,
-      "position": [
-        2000,
-        760
-      ],
-      "webhookId": "ototext-bcast-wait"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "=https://api.green-api.com/waInstance{{ $env.ID_INSTANCE }}/sendMessage/{{ $env.API_TOKEN }}",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ chatId: $json.targetChatId, message: $json.message }) }}",
-        "options": {
-          "timeout": 30000
-        }
-      },
-      "id": "http-bcast-send",
-      "name": "Send Broadcast Msg",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2240,
-        760
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "const first = $('Broadcast Prepare').first().json;\nconst total = first.total || 0;\nconst skipped = first.skipped || 0;\nconst extra = skipped ? `\\n🚫 Kara listede atlandı: ${skipped}` : '';\nreturn [{\n  json: {\n    chatId: first.replyChatId,\n    reply: `✅ Broadcast tamam — ${total} gruba gönderildi.${extra}`\n  }\n}];"
-      },
-      "id": "bcast-done",
-      "name": "Broadcast Done",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2000,
-        920
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const source = $env.SOURCE_GROUP_ID || '-';\nconst target = $env.TARGET_GROUP_ID || '-';\nreturn [{\n  json: {\n    chatId: $json.chatId,\n    reply: `🔄 Sync komutu alındı.\\nKaynak: ${source}\\nHedef: ${target}\\n\\nNot: Uzun sync için \"Ototext — Grup Katılımcı Senkronizasyonu\" workflow'unu UI'dan Manual Trigger ile çalıştırın (15 dk rate limit).`,\n    runSync: true,\n    sourceGroupId: source,\n    targetGroupId: target\n  }\n}];"
-      },
-      "id": "cmd-sync",
-      "name": "Sync Text",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1280,
-        900
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const p = $json.prefix || '/';\nreturn [{\n  json: {\n    chatId: $json.chatId,\n    reply: `❓ Bilinmeyen komut: ${$json.command}\\n${p}help yazarak listeyi görün.`\n  }\n}];"
-      },
-      "id": "cmd-unknown",
-      "name": "Unknown Text",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1280,
-        1040
       ]
     },
     {
@@ -613,36 +99,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2520,
-        360
+        820,
+        280
       ],
       "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "const prev = $json;\nconst prefix = prev.prefix || '/';\nconst arg = (prev.args || '').trim();\nconst staticData = $getWorkflowStaticData('global');\nstaticData.blacklist = Array.isArray(staticData.blacklist) ? staticData.blacklist : [];\n\nfunction resolveId(raw) {\n  if (!raw) return null;\n  if (raw.includes('@g.us') || raw.includes('@c.us')) return raw;\n  const n = parseInt(raw, 10);\n  if (!Number.isFinite(n)) return null;\n  const page = staticData.lastGroupsPage || {};\n  const items = Array.isArray(page.items) ? page.items : [];\n  // match absolute no from /groups list\n  const byNo = items.find((x) => x.no === n);\n  if (byNo) return byNo.id;\n  // or 1-based index within last page\n  if (n >= 1 && n <= items.length) return items[n - 1].id;\n  return null;\n}\n\nif (!arg) {\n  const bl = staticData.blacklist;\n  if (!bl.length) {\n    return [{ json: { chatId: prev.chatId, reply: `🚫 Kara liste boş.\\nEklemek: ${prefix}blacklist <no|id>\\nNo için önce ${prefix}groups` } }];\n  }\n  const lines = [`🚫 *Kara liste* (${bl.length})`, ''];\n  bl.forEach((id, i) => lines.push(`${i + 1}. ${id}`));\n  lines.push('', `Çıkar: ${prefix}unblacklist <no|id>`);\n  return [{ json: { chatId: prev.chatId, reply: lines.join('\\n') } }];\n}\n\nconst id = resolveId(arg);\nif (!id) {\n  return [{ json: { chatId: prev.chatId, reply: `Geçersiz hedef: ${arg}\\nÖrnek: ${prefix}blacklist 3  veya  ${prefix}blacklist 120363...@g.us\\nÖnce ${prefix}groups ile listele.` } }];\n}\n\nif (!staticData.blacklist.includes(id)) {\n  staticData.blacklist.push(id);\n}\n\nreturn [{ json: { chatId: prev.chatId, reply: `🚫 Kara listeye eklendi.\\n${id}\\n\\nArtık /broadcast bu gruba mesaj atmaz.\\nToplam blacklist: ${staticData.blacklist.length}` } }];"
-      },
-      "id": "cmd-blacklist",
-      "name": "Blacklist Text",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1280,
-        1160
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const prev = $json;\nconst prefix = prev.prefix || '/';\nconst arg = (prev.args || '').trim();\nconst staticData = $getWorkflowStaticData('global');\nstaticData.blacklist = Array.isArray(staticData.blacklist) ? staticData.blacklist : [];\n\nfunction resolveId(raw) {\n  if (!raw) return null;\n  if (raw.includes('@')) return raw;\n  const n = parseInt(raw, 10);\n  if (!Number.isFinite(n)) return null;\n  // index in blacklist list\n  if (n >= 1 && n <= staticData.blacklist.length) return staticData.blacklist[n - 1];\n  const page = staticData.lastGroupsPage || {};\n  const items = Array.isArray(page.items) ? page.items : [];\n  const byNo = items.find((x) => x.no === n);\n  if (byNo) return byNo.id;\n  if (n >= 1 && n <= items.length) return items[n - 1].id;\n  return null;\n}\n\nif (!arg) {\n  return [{ json: { chatId: prev.chatId, reply: `Kullanım: ${prefix}unblacklist <no|id>` } }];\n}\n\nconst id = resolveId(arg);\nif (!id) {\n  return [{ json: { chatId: prev.chatId, reply: `Bulunamadı: ${arg}` } }];\n}\n\nconst before = staticData.blacklist.length;\nstaticData.blacklist = staticData.blacklist.filter((x) => x !== id);\nconst removed = before !== staticData.blacklist.length;\nreturn [{ json: { chatId: prev.chatId, reply: removed ? `✅ Kara listeden çıkarıldı.\\n${id}` : `Zaten listede yoktu.\\n${id}` } }];"
-      },
-      "id": "cmd-unblacklist",
-      "name": "Unblacklist Text",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1280,
-        1300
-      ]
     }
   ],
   "connections": {
@@ -650,338 +110,34 @@
       "main": [
         [
           {
-            "node": "Parse Prefix Command",
+            "node": "Handle ! Commands",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Parse Prefix Command": {
+    "Handle ! Commands": {
       "main": [
         [
           {
-            "node": "Has Command?",
+            "node": "Has Reply?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Has Command?": {
+    "Has Reply?": {
       "main": [
         [
           {
-            "node": "Is Admin?",
+            "node": "Reply sendMessage",
             "type": "main",
             "index": 0
           }
         ],
         []
-      ]
-    },
-    "Is Admin?": {
-      "main": [
-        [
-          {
-            "node": "Route Command",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Unauthorized Reply",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Unauthorized Reply": {
-      "main": [
-        [
-          {
-            "node": "Reply sendMessage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Route Command": {
-      "main": [
-        [
-          {
-            "node": "Help Text",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Ping Text",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Green API Status",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Id Text",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Groups Text",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Broadcast Prepare",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Sync Text",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Blacklist Text",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Unblacklist Text",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Unknown Text",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Help Text": {
-      "main": [
-        [
-          {
-            "node": "Reply sendMessage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ping Text": {
-      "main": [
-        [
-          {
-            "node": "Reply sendMessage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Green API Status": {
-      "main": [
-        [
-          {
-            "node": "Status Text",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Status Text": {
-      "main": [
-        [
-          {
-            "node": "Reply sendMessage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Id Text": {
-      "main": [
-        [
-          {
-            "node": "Reply sendMessage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Groups Text": {
-      "main": [
-        [
-          {
-            "node": "Reply sendMessage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Broadcast Prepare": {
-      "main": [
-        [
-          {
-            "node": "Skip Broadcast?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Skip Broadcast?": {
-      "main": [
-        [
-          {
-            "node": "Broadcast Error Text",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Loop Broadcast",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Broadcast Error Text": {
-      "main": [
-        [
-          {
-            "node": "Reply sendMessage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Loop Broadcast": {
-      "main": [
-        [
-          {
-            "node": "Wait 2s",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Broadcast Done",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Wait 2s": {
-      "main": [
-        [
-          {
-            "node": "Send Broadcast Msg",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Broadcast Msg": {
-      "main": [
-        [
-          {
-            "node": "Loop Broadcast",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Broadcast Done": {
-      "main": [
-        [
-          {
-            "node": "Reply sendMessage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sync Text": {
-      "main": [
-        [
-          {
-            "node": "Reply sendMessage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Unknown Text": {
-      "main": [
-        [
-          {
-            "node": "Reply sendMessage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Blacklist Text": {
-      "main": [
-        [
-          {
-            "node": "Reply sendMessage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Unblacklist Text": {
-      "main": [
-        [
-          {
-            "node": "Reply sendMessage",
-            "type": "main",
-            "index": 0
-          }
-        ]
       ]
     }
   },

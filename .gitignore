@@ -7,3 +7,5 @@ logs/
 .DS_Store
 node_modules/
 package-lock.json
+data/ototext-state.json
+data/worker-workflow-id.txt
