@@ -18,6 +18,7 @@ from license import (
     license_status,
     load_customers,
     revoke_license,
+    save_customers,
 )
 
 SELLER_DIR = Path(__file__).resolve().parent
@@ -74,7 +75,11 @@ HTML = """<!DOCTYPE html>
         <input name="days" type="number" value="365" min="1"/>
         <label>Not</label>
         <input name="note" placeholder="Telegram / ödeme no"/>
-        <button type="submit">Lisans Üret</button>
+        <label>Green API ID_INSTANCE (müşteri QR okutacak — API görmez)</label>
+        <input name="idInstance" placeholder="1101...."/>
+        <label>Green API API_TOKEN</label>
+        <input name="apiToken" placeholder="apiTokenInstance"/>
+        <button type="submit">Lisans Üret + Kit</button>
       </form>
       <pre id="createOut" class="muted"></pre>
     </div>
@@ -146,7 +151,24 @@ create.addEventListener('submit', async (e)=>{
   const j = await r.json();
   if(j.ok){
     createOut.textContent = 'OK\\nLICENSE_KEY='+j.customer.licenseKey+'\\nJTI='+j.customer.jti;
-    await downloadKit(j.customer.jti);
+    // kit isteğine Green API bilgisini de gönder
+    kitOut.textContent = 'Kit hazırlanıyor...';
+    const kr = await fetch('/api/kit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      jti: j.customer.jti,
+      idInstance: body.idInstance||'',
+      apiToken: body.apiToken||'',
+    })});
+    if((kr.headers.get('content-type')||'').includes('application/zip')){
+      const blob = await kr.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (j.customer.jti||'ototext').slice(0,8) + '-kit.zip';
+      a.click();
+      kitOut.textContent = 'ZIP indirildi.';
+    } else {
+      const kj = await kr.json();
+      kitOut.textContent = kj.error || JSON.stringify(kj);
+    }
   } else {
     createOut.textContent = 'HATA\\n'+(j.error||'');
   }
@@ -164,13 +186,26 @@ refresh();
 """
 
 
-def build_customer_kit(jti: str) -> Path:
+def build_customer_kit(jti: str, id_instance: str = "", api_token: str = "") -> Path:
     data = load_customers()
     row = next((c for c in data.get("customers", []) if c.get("jti") == jti), None)
     if not row:
         raise ValueError("JTI bulunamadı")
     if row.get("revoked"):
         raise ValueError("Lisans iptal edilmiş")
+
+    # müşteri kaydında saklanan Green API (varsa)
+    id_instance = (id_instance or row.get("idInstance") or "").strip()
+    api_token = (api_token or row.get("apiToken") or "").strip()
+    if id_instance or api_token:
+        for c in data.get("customers", []):
+            if c.get("jti") == jti:
+                if id_instance:
+                    c["idInstance"] = id_instance
+                if api_token:
+                    c["apiToken"] = api_token
+                break
+        save_customers(data)
 
     out_dir = SELLER_DIR / "kits"
     out_dir.mkdir(exist_ok=True)
@@ -240,11 +275,16 @@ def build_customer_kit(jti: str) -> Path:
         shutil.copy2(SELLER_DIR / "license.py", root / "scripts" / "license_lib.py")
 
         env = (ROOT / ".env.example").read_text(encoding="utf-8")
-        for key, val in (
-            ("LICENSE_KEY=", f"LICENSE_KEY={row['licenseKey']}"),
-            ("OTOTEXT_LICENSE_SECRET=", f"OTOTEXT_LICENSE_SECRET={secret}"),
-            ("LICENSE_SKIP=", "LICENSE_SKIP="),
-        ):
+        replacements = {
+            "LICENSE_KEY=": f"LICENSE_KEY={row['licenseKey']}",
+            "OTOTEXT_LICENSE_SECRET=": f"OTOTEXT_LICENSE_SECRET={secret}",
+            "LICENSE_SKIP=": "LICENSE_SKIP=",
+        }
+        if id_instance:
+            replacements["ID_INSTANCE="] = f"ID_INSTANCE={id_instance}"
+        if api_token:
+            replacements["API_TOKEN="] = f"API_TOKEN={api_token}"
+        for key, val in replacements.items():
             if key in env:
                 lines = []
                 for line in env.splitlines():
@@ -256,6 +296,7 @@ def build_customer_kit(jti: str) -> Path:
             else:
                 env += f"\n{val}\n"
         (root / ".env.example").write_text(env, encoding="utf-8")
+        (root / ".env").write_text(env, encoding="utf-8")
         (root / "LICENSE_KEY.txt").write_text(row["licenseKey"] + "\n", encoding="utf-8")
         (root / "LICENSE_SECRET.txt").write_text(secret + "\n", encoding="utf-8")
         (root / "license.json").write_text(
@@ -274,37 +315,30 @@ def build_customer_kit(jti: str) -> Path:
             + "\n",
             encoding="utf-8",
         )
+        ga_note = (
+            "Green API instance pakete gömülü — sen API girmezsin, sadece QR okutursun."
+            if id_instance and api_token
+            else "Satıcı henüz instance eklemediyse kurulum ekranındaki gelişmiş alana girmesi gerekir."
+        )
         (root / "MUSTERI.md").write_text(
-            f"""# Ototext Müşteri Kurulum
+            f"""# Ototext — QR ile Kurulum
 
 Merhaba {row.get('name') or ''},
 
-Bu paket senin Ototext kopyan (satıcının sistemiyle aynı).
+Bu paket senin Ototext kopyan. **API / token uğraşma.**
 
-## 1) Hazırlık
+{ga_note}
+
+## Kurulum
 ```bash
-cp .env.example .env
-```
-
-`.env` içinde `LICENSE_KEY` zaten dolu. Sen sadece Green API doldur:
-
-```env
-ID_INSTANCE=...
-API_TOKEN=...
-BOT_ADMINS=905xxxxxxxxx@c.us
-BOT_PREFIX=!
-```
-
-## 2) Kur
-```bash
-npm install
-bash scripts/setup-native.sh
-# veya mobil kurulum:
 bash scripts/start-mobile-setup.sh
 ```
 
-## 3) WhatsApp
-Bot numarandan yaz: `!yardim`  
+Telefonda çıkan linki aç → **QR Kodunu Göster** → WhatsApp’tan okut.  
+Okutunca bot kendi kurulur.
+
+## Sonra
+Bot numarasına yaz: `!yardim`  
 Lisans: `!lisans`
 
 Plan: {row.get('plan')}  
@@ -368,12 +402,30 @@ class Handler(BaseHTTPRequestHandler):
                     plan=body.get("plan") or "standard",
                     note=body.get("note") or "",
                 )
+                # Green API’yi müşteri kaydına yaz (kit için)
+                iid = (body.get("idInstance") or "").strip()
+                at = (body.get("apiToken") or "").strip()
+                if iid or at:
+                    data = load_customers()
+                    for c in data.get("customers", []):
+                        if c.get("jti") == row["jti"]:
+                            if iid:
+                                c["idInstance"] = iid
+                            if at:
+                                c["apiToken"] = at
+                            row = c
+                            break
+                    save_customers(data)
                 return self._json(200, {"ok": True, "customer": row})
             if path == "/api/revoke":
                 ok = revoke_license(body.get("jti") or "")
                 return self._json(200 if ok else 404, {"ok": ok})
             if path == "/api/kit":
-                zpath = build_customer_kit(body.get("jti") or "")
+                zpath = build_customer_kit(
+                    body.get("jti") or "",
+                    id_instance=(body.get("idInstance") or ""),
+                    api_token=(body.get("apiToken") or ""),
+                )
                 data = zpath.read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/zip")

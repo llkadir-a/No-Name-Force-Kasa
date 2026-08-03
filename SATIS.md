@@ -30,20 +30,18 @@ python3 seller/license.py verify --key "....."
 
 ## Müşteriye ne veriyorsun?
 
-ZIP içinde:
+ZIP içinde lisans + bot + kurulum. **Müşteri API/token girmez.**
 
-- `LICENSE_KEY.txt` + imza doğrulama için `LICENSE_SECRET.txt`
-- `MUSTERI.md` kurulum adımları
-- n8n workflow’ları (seninkiyle aynı bot)
-- `scripts/setup-native.sh` + mobil kurulum
-- `.env.example` içinde `LICENSE_KEY` dolu
+Sen (satıcı) ZIP’ten önce her müşteri için Green API’de bir instance oluşturup  
+`.env.example` içine `ID_INSTANCE` + `API_TOKEN` yaz (veya panelden kit üretirken doldur).  
+İstersen `GREEN_API_PARTNER_TOKEN` ile kurulum instance’ı otomatik de üretebilir.
 
 Müşteri:
 
-1. ZIP’i açar
-2. `.env.example` → `.env` kopyalar, Green API doldurur
-3. `bash scripts/setup-native.sh` veya mobil kurulum kullanır
-4. WhatsApp’tan `!yardim` / `!lisans`
+1. ZIP’i açar / sunucuda çalıştırır
+2. `bash scripts/start-mobile-setup.sh`
+3. Telefondaki linki açar → **QR’ı WhatsApp’tan okutur**
+4. Sistem webhook + botu kendi kurar → `!yardim`
 
 ## Paket önerisi
 

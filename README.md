@@ -48,7 +48,7 @@ Detay: [`SATIS.md`](SATIS.md)
 bash scripts/start-mobile-setup.sh
 ```
 
-Forma Green API `ID_INSTANCE` + `API_TOKEN` + admin numaranı yaz.
+Telefondaki linki aç → **QR Kodunu Göster** → WhatsApp’tan okut. API/token girmen gerekmez (satıcı pakete gömer).
 
 ## Mimari
 

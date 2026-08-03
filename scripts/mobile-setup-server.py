@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ototext mobile setup portal — WhatsApp bot credentials + webhook."""
+"""Ototext mobile setup — QR okut, bot açılsın (müşteri API uğraşmasın)."""
 from __future__ import annotations
 
 import json
@@ -13,7 +13,7 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = ROOT / ".env"
@@ -27,69 +27,135 @@ HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
-<title>Ototext Bot Kurulum</title>
+<title>Ototext — QR ile Bağlan</title>
 <style>
   :root { --bg:#0b0f14; --card:#151b24; --text:#e8eef7; --muted:#93a0b4; --acc:#3ddc97; --danger:#ff6b6b; --line:#243041; }
   * { box-sizing: border-box; }
-  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:radial-gradient(1200px 600px at 10% -10%, #1a2740, var(--bg)); color:var(--text); min-height:100vh; }
-  .wrap { max-width:560px; margin:0 auto; padding:24px 16px 48px; }
-  h1 { font-size:1.45rem; margin:0 0 6px; }
-  p { color:var(--muted); margin:0 0 18px; line-height:1.45; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:radial-gradient(1200px 600px at 10% -10%, #1a2740, var(--bg)); color:var(--text); min-height:100vh; }
+  .wrap { max-width:520px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.5rem; margin:0 0 6px; }
+  p { color:var(--muted); margin:0 0 16px; line-height:1.45; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; }
   label { display:block; font-size:.82rem; color:var(--muted); margin:12px 0 6px; }
-  input, textarea { width:100%; border:1px solid var(--line); background:#0f141c; color:var(--text); border-radius:12px; padding:12px 14px; font-size:16px; }
-  textarea { min-height:72px; resize:vertical; }
-  button { width:100%; margin-top:18px; border:0; border-radius:12px; padding:14px; font-size:1rem; font-weight:700; background:var(--acc); color:#062418; }
+  input { width:100%; border:1px solid var(--line); background:#0f141c; color:var(--text); border-radius:12px; padding:12px 14px; font-size:16px; }
+  button { width:100%; margin-top:14px; border:0; border-radius:12px; padding:14px; font-size:1rem; font-weight:700; background:var(--acc); color:#062418; cursor:pointer; }
+  button.secondary { background:#2a3545; color:var(--text); }
   button:disabled { opacity:.55; }
-  .status { margin-top:14px; white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.78rem; background:#0f141c; border-radius:12px; padding:12px; border:1px solid var(--line); max-height:45vh; overflow:auto; }
-  .ok { color:var(--acc); }
-  .err { color:var(--danger); }
-  .hint { font-size:.78rem; color:var(--muted); margin-top:10px; }
+  .qrbox { margin:16px auto 8px; width:min(280px,80vw); aspect-ratio:1; background:#fff; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  .qrbox img { width:100%; height:100%; object-fit:contain; }
+  .status { margin-top:12px; white-space:pre-wrap; font-family:ui-monospace,monospace; font-size:.78rem; background:#0f141c; border-radius:12px; padding:12px; border:1px solid var(--line); max-height:40vh; overflow:auto; }
+  .ok { color:var(--acc); } .err { color:var(--danger); }
+  .hint { font-size:.8rem; color:var(--muted); margin-top:8px; line-height:1.4; }
+  .step { font-weight:700; color:var(--acc); margin-bottom:8px; }
+  details { margin-top:14px; color:var(--muted); font-size:.85rem; }
+  details summary { cursor:pointer; }
+  .hidden { display:none !important; }
 </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Ototext WhatsApp Bot</h1>
-    <p>Numarana bağlanan bot. Prefix komutlarla yönetilir (örn. <b>/help</b>). Formu doldur, gerisini Ototext yapsın.</p>
+    <h1>Ototext</h1>
+    <p>WhatsApp’tan QR okut — sistem kendini kurar. API / token uğraşı yok.</p>
     <div class="card">
-      <form id="f">
+      <div id="bootMsg" class="hint">Hazırlanıyor...</div>
+
+      <div id="panelNeedCreds" class="hidden">
+        <div class="step">Satıcı kurulumu gerekli</div>
+        <p class="hint">Bu pakette henüz Green API instance yok. Satıcı panelinden instance eklenmeli veya aşağıdaki gelişmiş alana girilmeli.</p>
+      </div>
+
+      <div id="panelQr">
+        <div class="step" id="stepLabel">1) WhatsApp ile bağlan</div>
+        <label>Komut yetkisi (senin numaran) — boş bırakırsan bot numarası admin olur</label>
+        <input id="admin" placeholder="905xxxxxxxxx" autocomplete="tel"/>
+        <button id="btnQr" type="button">QR Kodunu Göster</button>
+        <div id="qrWrap" class="hidden">
+          <div class="qrbox"><img id="qrImg" alt="QR"/></div>
+          <p class="hint">WhatsApp → Bağlı Cihazlar → Cihaz Bağla → bu QR’ı okut.<br/>Kod ~20 sn’de yenilenir; okutunca otomatik devam eder.</p>
+          <div id="stateLine" class="hint">Durum: bekleniyor…</div>
+        </div>
+        <button id="btnActivate" class="secondary hidden" type="button">Bağlandı — Botu Başlat</button>
+      </div>
+
+      <div id="out" class="status hidden"></div>
+
+      <details>
+        <summary>Gelişmiş (satıcı / teknik)</summary>
         <label>ID_INSTANCE</label>
-        <input name="ID_INSTANCE" required placeholder="Green API instance id" autocomplete="off"/>
+        <input id="advId" autocomplete="off"/>
         <label>API_TOKEN</label>
-        <input name="API_TOKEN" required placeholder="apiTokenInstance" autocomplete="off"/>
-        <label>Admin WhatsApp no (komut yetkisi)</label>
-        <input name="BOT_ADMINS" required placeholder="905xxxxxxxxx" autocomplete="off"/>
-        <label>Komut prefix</label>
-        <input name="BOT_PREFIX" value="!" placeholder="/"/>
-        <label>Broadcast grupları (satır başına chatId)</label>
-        <textarea name="GROUP_CHAT_IDS" placeholder="120363...@g.us"></textarea>
-        <label>SOURCE_GROUP_ID (sync kaynak)</label>
-        <input name="SOURCE_GROUP_ID" placeholder="120363...@g.us"/>
-        <label>TARGET_GROUP_ID (sync hedef)</label>
-        <input name="TARGET_GROUP_ID" placeholder="120363...@g.us"/>
-        <button type="submit" id="btn">Botu Kur ve Aktif Et</button>
-      </form>
-      <div class="hint">Green API’de WhatsApp QR ile bağlı olmalı. Kurulum sonrası bota <b>/help</b> yaz.</div>
-      <div id="out" class="status" hidden></div>
+        <input id="advToken" autocomplete="off"/>
+        <button id="btnSaveCreds" class="secondary" type="button">Kaydet ve QR’a geç</button>
+      </details>
     </div>
   </div>
 <script>
-const f=document.getElementById('f');
+let timer=null, activating=false;
 const out=document.getElementById('out');
-const btn=document.getElementById('btn');
-f.addEventListener('submit', async (e)=>{
-  e.preventDefault();
-  btn.disabled=true; out.hidden=false; out.className='status'; out.textContent='Çalışıyor...';
-  const body=Object.fromEntries(new FormData(f).entries());
+function show(msg, ok){ out.hidden=false; out.className='status '+(ok===true?'ok':ok===false?'err':''); out.textContent=msg; }
+async function boot(){
+  const r=await fetch('/api/boot'); const j=await r.json();
+  document.getElementById('bootMsg').textContent = j.message || '';
+  if(j.admin) document.getElementById('admin').value=j.admin;
+  if(j.authorized){
+    document.getElementById('stepLabel').textContent='WhatsApp zaten bağlı';
+    document.getElementById('btnActivate').classList.remove('hidden');
+    document.getElementById('stateLine').textContent='Durum: authorized';
+  }
+  if(!j.hasCreds && !j.canProvision){
+    document.getElementById('panelNeedCreds').classList.remove('hidden');
+  }
+  if(j.idInstance) document.getElementById('advId').value=j.idInstance;
+}
+async function saveCreds(){
+  const body={ID_INSTANCE:advId.value.trim(), API_TOKEN:advToken.value.trim()};
+  const r=await fetch('/api/creds',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json();
+  show(j.ok?'Kimlik kaydedildi. QR’a bas.':(j.error||'Hata'), !!j.ok);
+  boot();
+}
+async function poll(){
   try{
-    const r=await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const r=await fetch('/api/qr'); const j=await r.json();
+    if(j.qrDataUrl){ qrImg.src=j.qrDataUrl; qrWrap.classList.remove('hidden'); }
+    stateLine.textContent='Durum: '+(j.state||j.type||'?')+(j.message&&!j.qrDataUrl?(' — '+j.message):'');
+    if(j.authorized){
+      clearInterval(timer); timer=null;
+      stateLine.textContent='Durum: authorized — bot kuruluyor…';
+      btnActivate.classList.remove('hidden');
+      await activate();
+    }
+  }catch(e){ stateLine.textContent='QR hata: '+e; }
+}
+async function startQr(){
+  btnQr.disabled=true;
+  show('QR hazırlanıyor…');
+  const r=await fetch('/api/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({BOT_ADMINS:admin.value.trim()})});
+  const j=await r.json();
+  if(!j.ok){ show(j.error||'Hazırlık başarısız', false); btnQr.disabled=false; return; }
+  show('QR’ı WhatsApp ile okut…', true);
+  qrWrap.classList.remove('hidden');
+  if(timer) clearInterval(timer);
+  await poll();
+  timer=setInterval(poll, 2000);
+  btnQr.disabled=false;
+}
+async function activate(){
+  if(activating) return; activating=true;
+  btnActivate.disabled=true; btnQr.disabled=true;
+  show('Bot kuruluyor (tunnel + webhook)… bu 1-2 dk sürebilir');
+  try{
+    const r=await fetch('/api/activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({BOT_ADMINS:admin.value.trim(), BOT_PREFIX:'!'})});
     const j=await r.json();
-    out.className='status '+(j.ok?'ok':'err');
-    out.textContent=(j.ok?'OK\\n':'HATA\\n')+(j.log||j.error||JSON.stringify(j,null,2));
-  }catch(err){
-    out.className='status err'; out.textContent=String(err);
-  }finally{ btn.disabled=false; }
-});
+    show((j.ok?'OK\\n':'HATA\\n')+(j.log||j.error||JSON.stringify(j,null,2)), !!j.ok);
+    if(j.ok) document.getElementById('stepLabel').textContent='Hazır — WhatsApp’tan !yardim yaz';
+  }catch(e){ show(String(e), false); }
+  finally{ activating=false; btnActivate.disabled=false; btnQr.disabled=false; }
+}
+btnQr.onclick=startQr;
+btnActivate.onclick=activate;
+btnSaveCreds.onclick=saveCreds;
+boot();
 </script>
 </body>
 </html>
@@ -136,6 +202,7 @@ def write_env(updates: dict[str, str]) -> None:
         "OTOTEXT_LICENSE_SECRET",
         "LICENSE_SKIP",
         "NODE_FUNCTION_ALLOW_BUILTIN",
+        "GREEN_API_PARTNER_TOKEN",
     ]
     lines, seen = [], set()
     for k in keys:
@@ -186,15 +253,57 @@ def http_json(method: str, url: str, body: dict | None = None, cookies: str | No
         return e.code, payload, []
 
 
-def green_api_state(instance: str, token: str) -> tuple[bool, str]:
+def creds() -> tuple[str, str]:
+    env = read_env()
+    return (env.get("ID_INSTANCE") or "").strip(), (env.get("API_TOKEN") or "").strip()
+
+
+def placeholder(v: str) -> bool:
+    return (not v) or v in ("YOUR_INSTANCE_ID", "YOUR_API_TOKEN_INSTANCE")
+
+
+def has_creds() -> bool:
+    i, t = creds()
+    return not placeholder(i) and not placeholder(t)
+
+
+def partner_token() -> str:
+    env = read_env()
+    return (os.environ.get("GREEN_API_PARTNER_TOKEN") or env.get("GREEN_API_PARTNER_TOKEN") or "").strip()
+
+
+def green_api_state(instance: str, token: str) -> tuple[str, dict]:
     url = f"https://api.green-api.com/waInstance{instance}/getStateInstance/{token}"
     try:
         with urllib.request.urlopen(url, timeout=20) as resp:
             payload = json.loads(resp.read().decode())
-            state = payload.get("stateInstance", "")
-            return state == "authorized", f"stateInstance={state} body={payload}"
+            return str(payload.get("stateInstance") or ""), payload
     except Exception as e:
-        return False, str(e)
+        return "", {"error": str(e)}
+
+
+def green_api_qr(instance: str, token: str) -> dict:
+    url = f"https://api.green-api.com/waInstance{instance}/qr/{token}"
+    try:
+        with urllib.request.urlopen(url, timeout=20) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode()
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {"type": "error", "message": raw or str(e)}
+    except Exception as e:
+        return {"type": "error", "message": str(e)}
+
+
+def green_api_settings(instance: str, token: str) -> dict:
+    url = f"https://api.green-api.com/waInstance{instance}/getSettings/{token}"
+    try:
+        with urllib.request.urlopen(url, timeout=20) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def green_api_set_webhook(instance: str, token: str, webhook_url: str) -> str:
@@ -212,34 +321,42 @@ def green_api_set_webhook(instance: str, token: str, webhook_url: str) -> str:
     return f"setSettings HTTP {code} {json.dumps(payload)[:300]}"
 
 
-def update_scenario1_groups(chat_ids: list[str], message: str) -> None:
-    path = ROOT / "n8n-workflows" / "scenario-1-scheduled-group-broadcast.json"
-    data = json.loads(path.read_text())
-    for node in data.get("nodes", []):
-        if node.get("name") == "Grup Listesi Oluştur":
-            ids_js = ",\n  ".join(json.dumps(x) for x in chat_ids)
-            node["parameters"]["jsCode"] = f"""const message = $env.BROADCAST_MESSAGE || {json.dumps(message)};
+def green_api_create_instance(name: str) -> dict:
+    tok = partner_token()
+    if not tok:
+        raise RuntimeError("GREEN_API_PARTNER_TOKEN yok — satıcı instance oluşturmalı")
+    url = f"https://api.green-api.com/partner/createInstance/{tok}"
+    code, payload, _ = http_json("POST", url, {"name": name or "Ototext", "delaySendMessagesMilliseconds": 3000})
+    if code >= 400:
+        raise RuntimeError(f"createInstance HTTP {code}: {payload}")
+    iid = str(payload.get("idInstance") or "")
+    at = str(payload.get("apiTokenInstance") or "")
+    if not iid or not at:
+        raise RuntimeError(f"createInstance eksik cevap: {payload}")
+    write_env({"ID_INSTANCE": iid, "API_TOKEN": at})
+    return {"idInstance": iid, "apiTokenInstance": at}
 
-const groupChatIds = [
-  {ids_js}
-];
 
-return groupChatIds.map((chatId, index) => ({{
-  json: {{
-    index: index + 1,
-    chatId,
-    message
-  }}
-}}));"""
-            break
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+def check_license() -> tuple[bool, str]:
+    try:
+        r = subprocess.run(
+            ["python3", str(ROOT / "scripts" / "check-license.py")],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            env=os.environ.copy(),
+        )
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        return r.returncode == 0, out or ("ok" if r.returncode == 0 else "lisans hatası")
+    except Exception as e:
+        return False, str(e)
 
 
 def ensure_n8n_tunnel() -> str:
     script = ROOT / "scripts" / "ensure-n8n-tunnel.sh"
     r = subprocess.run(["bash", str(script)], cwd=str(ROOT), capture_output=True, text=True)
     if r.returncode != 0:
-        raise RuntimeError(f"tunnel failed: {r.stdout}\\n{r.stderr}")
+        raise RuntimeError(f"tunnel failed: {r.stdout}\n{r.stderr}")
     url_file = LOGS / "n8n-public-url.txt"
     if not url_file.exists():
         raise RuntimeError("n8n public url missing")
@@ -260,6 +377,10 @@ def restart_n8n() -> str:
             log.append(f"stop note: {e}")
 
     n8n_bin = ROOT / "node_modules" / ".bin" / "n8n"
+    if not n8n_bin.exists():
+        log.append("npm install n8n...")
+        subprocess.run(["npm", "install", "n8n", "--save"], cwd=str(ROOT), check=False)
+
     child_env = os.environ.copy()
     child_env.update(
         {
@@ -280,9 +401,10 @@ def restart_n8n() -> str:
             "TARGET_GROUP_ID": env.get("TARGET_GROUP_ID", ""),
             "BROADCAST_MESSAGE": env.get("BROADCAST_MESSAGE", ""),
             "BROADCAST_GROUPS": env.get("BROADCAST_GROUPS", ""),
-            "BOT_PREFIX": env.get("BOT_PREFIX", "/"),
+            "BOT_PREFIX": env.get("BOT_PREFIX", "!"),
             "BOT_ADMINS": env.get("BOT_ADMINS", ""),
             "WEBHOOK_PUBLIC_URL": env.get("WEBHOOK_PUBLIC_URL", ""),
+            "LICENSE_KEY": env.get("LICENSE_KEY", ""),
         }
     )
     out = open(LOGS / "n8n.log", "a")
@@ -296,7 +418,7 @@ def restart_n8n() -> str:
     )
     pid_file.write_text(str(proc.pid))
     log.append(f"started n8n pid {proc.pid}")
-    for i in range(60):
+    for i in range(90):
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{N8N_PORT}/healthz", timeout=2) as r:
                 if r.status == 200:
@@ -304,7 +426,7 @@ def restart_n8n() -> str:
                     return "\n".join(log)
         except Exception:
             time.sleep(1)
-    raise RuntimeError("n8n did not become healthy\\n" + "\\n".join(log))
+    raise RuntimeError("n8n did not become healthy\n" + "\n".join(log))
 
 
 def n8n_login_cookie() -> str:
@@ -317,6 +439,27 @@ def n8n_login_cookie() -> str:
             "password": env.get("N8N_OWNER_PASSWORD", "ChangeMe_Admin_123!"),
         },
     )
+    if code >= 400:
+        # owner maybe not set up yet
+        setup_code, setup_payload, _ = http_json(
+            "POST",
+            f"http://127.0.0.1:{N8N_PORT}/rest/owner/setup",
+            {
+                "email": env.get("N8N_OWNER_EMAIL", "admin@localhost.local"),
+                "password": env.get("N8N_OWNER_PASSWORD", "ChangeMe_Admin_123!"),
+                "firstName": env.get("N8N_OWNER_FIRST_NAME", "Admin"),
+                "lastName": env.get("N8N_OWNER_LAST_NAME", "Ototext"),
+            },
+        )
+        if setup_code < 400 or "already" in json.dumps(setup_payload).lower():
+            code, payload, cookies = http_json(
+                "POST",
+                f"http://127.0.0.1:{N8N_PORT}/rest/login",
+                {
+                    "emailOrLdapLoginId": env.get("N8N_OWNER_EMAIL", "admin@localhost.local"),
+                    "password": env.get("N8N_OWNER_PASSWORD", "ChangeMe_Admin_123!"),
+                },
+            )
     if code >= 400:
         raise RuntimeError(f"login failed {code}: {payload}")
     return "; ".join(c.split(";", 1)[0] for c in cookies)
@@ -384,91 +527,174 @@ def import_and_activate(cookie: str, activate_names: set[str] | None = None) -> 
                 {"active": True, "versionId": version_id},
                 cookies=cookie,
             )
-        lines.append(f"activate {name} ({wid}): HTTP {c3} active={res.get('data', res).get('active') if isinstance(res, dict) else res}")
+        lines.append(
+            f"activate {name} ({wid}): HTTP {c3} active={res.get('data', res).get('active') if isinstance(res, dict) else res}"
+        )
     return "\n".join(lines)
 
 
-def check_license() -> tuple[bool, str]:
-    try:
-        r = subprocess.run(
-            ["python3", str(ROOT / "scripts" / "check-license.py")],
-            cwd=str(ROOT),
-            capture_output=True,
-            text=True,
-            env=os.environ.copy(),
-        )
-        out = ((r.stdout or "") + (r.stderr or "")).strip()
-        return r.returncode == 0, out or ("ok" if r.returncode == 0 else "lisans hatası")
-    except Exception as e:
-        return False, str(e)
+def api_boot() -> dict:
+    ok_lic, lic_msg = check_license()
+    if not ok_lic:
+        return {"ok": False, "hasCreds": False, "canProvision": False, "message": "Lisans: " + lic_msg}
+    iid, _ = creds()
+    state = ""
+    authorized = False
+    if has_creds():
+        state, _ = green_api_state(*creds())
+        authorized = state == "authorized"
+    env = read_env()
+    admin = env.get("BOT_ADMINS", "")
+    if admin and "@" in admin:
+        admin = admin.split("@", 1)[0]
+    return {
+        "ok": True,
+        "hasCreds": has_creds(),
+        "canProvision": bool(partner_token()),
+        "authorized": authorized,
+        "state": state,
+        "idInstance": "" if placeholder(iid) else iid,
+        "admin": admin,
+        "message": (
+            "QR’ı okut, gerisini Ototext yapsın."
+            if has_creds() or partner_token()
+            else "Instance yok — satıcı eklemeli veya gelişmiş alana girmeli."
+        ),
+    }
 
 
-def run_setup(payload: dict) -> dict:
+def api_prepare(payload: dict) -> dict:
+    ok_lic, lic_msg = check_license()
+    if not ok_lic:
+        return {"ok": False, "error": lic_msg}
+    if not ENV_PATH.exists():
+        if (ROOT / ".env.example").exists():
+            ENV_PATH.write_text((ROOT / ".env.example").read_text())
+    if payload.get("BOT_ADMINS"):
+        write_env({"BOT_ADMINS": normalize_admin(payload.get("BOT_ADMINS") or "")})
+    if not has_creds():
+        if partner_token():
+            try:
+                created = green_api_create_instance("Ototext-" + (payload.get("BOT_ADMINS") or "bot")[:20])
+                return {"ok": True, "provisioned": True, **created}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": "Green API instance yok. Satıcı pakete ID_INSTANCE/API_TOKEN eklemeli."}
+    # already authorized? still ok
+    return {"ok": True, "provisioned": False}
+
+
+def api_qr() -> dict:
+    if not has_creds():
+        return {"ok": False, "type": "error", "message": "credentials yok", "authorized": False}
+    instance, token = creds()
+    state, _ = green_api_state(instance, token)
+    if state == "authorized":
+        return {
+            "ok": True,
+            "authorized": True,
+            "state": state,
+            "type": "alreadyLogged",
+            "message": "authorized",
+            "qrPage": f"https://qr.green-api.com/waInstance{instance}/{token}",
+        }
+    qr = green_api_qr(instance, token)
+    out = {
+        "ok": True,
+        "authorized": False,
+        "state": state or "notAuthorized",
+        "type": qr.get("type"),
+        "message": qr.get("message") if qr.get("type") != "qrCode" else "",
+        "qrPage": f"https://qr.green-api.com/waInstance{instance}/{token}",
+    }
+    if qr.get("type") == "qrCode" and qr.get("message"):
+        out["qrDataUrl"] = "data:image/png;base64," + str(qr["message"]).strip()
+    elif qr.get("type") == "alreadyLogged":
+        out["authorized"] = True
+    return out
+
+
+def api_activate(payload: dict) -> dict:
     logs: list[str] = []
     ok_lic, lic_msg = check_license()
     logs.append("0) License: " + lic_msg)
     if not ok_lic:
         return {"ok": False, "error": "Geçerli lisans yok", "log": "\n".join(logs)}
+    if not has_creds():
+        return {"ok": False, "error": "Instance yok", "log": "\n".join(logs)}
 
-    instance = (payload.get("ID_INSTANCE") or "").strip()
-    token = (payload.get("API_TOKEN") or "").strip()
-    if not instance or not token:
-        return {"ok": False, "error": "ID_INSTANCE and API_TOKEN required"}
+    instance, token = creds()
+    state, detail = green_api_state(instance, token)
+    logs.append(f"1) stateInstance={state} {detail}")
+    if state != "authorized":
+        return {"ok": False, "error": "Önce WhatsApp QR okut (authorized değil)", "log": "\n".join(logs)}
 
-    prefix = (payload.get("BOT_PREFIX") or "!").strip() or "!"
-    admins = normalize_admin(payload.get("BOT_ADMINS") or "")
-    source = (payload.get("SOURCE_GROUP_ID") or "").strip() or "KAYNAK_GRUP_ID@g.us"
-    target = (payload.get("TARGET_GROUP_ID") or "").strip() or "HEDEF_GRUP_ID@g.us"
-    message = (payload.get("BROADCAST_MESSAGE") or "Ototext broadcast").strip()
-    raw_groups = (payload.get("GROUP_CHAT_IDS") or "").strip()
-    groups = [g.strip() for g in re.split(r"[\n,;]+", raw_groups) if g.strip()]
-    broadcast_groups = ",".join(groups)
-
-    logs.append("1) Saving .env (bot + API)")
+    prefix = (payload.get("BOT_PREFIX") or read_env().get("BOT_PREFIX") or "!").strip() or "!"
+    admins = normalize_admin(payload.get("BOT_ADMINS") or read_env().get("BOT_ADMINS") or "")
+    settings = green_api_settings(instance, token)
+    wid = normalize_admin(str(settings.get("wid") or ""))
+    if wid and wid not in (admins or "").split(","):
+        admins = ",".join(x for x in [admins, wid] if x)
     write_env(
         {
-            "ID_INSTANCE": instance,
-            "API_TOKEN": token,
-            "SOURCE_GROUP_ID": source,
-            "TARGET_GROUP_ID": target,
-            "BROADCAST_MESSAGE": message,
-            "BROADCAST_GROUPS": broadcast_groups,
             "BOT_PREFIX": prefix,
             "BOT_ADMINS": admins,
+            "NODE_FUNCTION_ALLOW_BUILTIN": "fs,path",
         }
     )
+    logs.append(f"2) admins={admins} wid={wid}")
 
-    if groups:
-        logs.append(f"2) Scenario-1 groups: {len(groups)}")
-        update_scenario1_groups(groups, message)
-    else:
-        logs.append("2) No broadcast groups yet")
-
-    logs.append("3) Validate Green API")
-    ok, detail = green_api_state(instance, token)
-    logs.append(detail)
-    if not ok:
-        return {"ok": False, "error": "Green API not authorized / invalid credentials", "log": "\n".join(logs)}
-
-    logs.append("4) Public n8n tunnel")
-    public = ensure_n8n_tunnel()
+    logs.append("3) Public n8n tunnel")
+    try:
+        public = ensure_n8n_tunnel()
+    except Exception as e:
+        return {"ok": False, "error": f"tunnel: {e}", "log": "\n".join(logs)}
     bot_webhook = f"{public}/webhook/ototext-bot"
     write_env({"WEBHOOK_PUBLIC_URL": public, "WEBHOOK_URL": public + "/"})
     logs.append(f"public={public}")
-    logs.append(f"bot_webhook={bot_webhook}")
 
-    logs.append("5) Restart n8n")
-    logs.append(restart_n8n())
+    logs.append("4) Restart n8n")
+    try:
+        logs.append(restart_n8n())
+    except Exception as e:
+        return {"ok": False, "error": str(e), "log": "\n".join(logs)}
 
-    logs.append("6) Import + activate bot workflow")
-    cookie = n8n_login_cookie()
-    logs.append(import_and_activate(cookie))
+    logs.append("5) Import + activate")
+    try:
+        cookie = n8n_login_cookie()
+        logs.append(import_and_activate(cookie))
+    except Exception as e:
+        return {"ok": False, "error": str(e), "log": "\n".join(logs)}
 
-    logs.append("7) Register Green API webhook")
+    logs.append("6) Webhook")
     logs.append(green_api_set_webhook(instance, token, bot_webhook))
-
-    logs.append("DONE — WhatsApp’tan bota yaz: " + prefix + "help")
+    logs.append("DONE — WhatsApp’tan yaz: " + prefix + "yardim")
     return {"ok": True, "log": "\n".join(logs), "bot_webhook": bot_webhook, "prefix": prefix}
+
+
+# legacy name used by older clients
+def run_setup(payload: dict) -> dict:
+    if payload.get("ID_INSTANCE") and payload.get("API_TOKEN"):
+        write_env(
+            {
+                "ID_INSTANCE": str(payload["ID_INSTANCE"]).strip(),
+                "API_TOKEN": str(payload["API_TOKEN"]).strip(),
+            }
+        )
+    prep = api_prepare(payload)
+    if not prep.get("ok"):
+        return prep
+    # if not authorized, tell client to use QR UI
+    instance, token = creds()
+    state, _ = green_api_state(instance, token)
+    if state != "authorized":
+        return {
+            "ok": False,
+            "error": "WhatsApp bağlı değil. Sayfadaki QR’ı okut, sonra otomatik kurulum başlar.",
+            "needQr": True,
+            "log": f"stateInstance={state}",
+        }
+    return api_activate(payload)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -482,19 +708,24 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _json(self, code: int, obj: dict):
+        self._send(code, json.dumps(obj, ensure_ascii=False).encode(), "application/json")
+
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        path = urlparse(self.path).path
+        if path in ("/", "/index.html"):
             self._send(200, HTML.encode(), "text/html; charset=utf-8")
             return
-        if self.path == "/health":
-            self._send(200, b'{"ok":true}', "application/json")
-            return
+        if path == "/health":
+            return self._json(200, {"ok": True})
+        if path == "/api/boot":
+            return self._json(200, api_boot())
+        if path == "/api/qr":
+            return self._json(200, api_qr())
         self._send(404, b"not found", "text/plain")
 
     def do_POST(self):
-        if self.path != "/api/setup":
-            self._send(404, b"not found", "text/plain")
-            return
+        path = urlparse(self.path).path
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length).decode()
         ctype = self.headers.get("Content-Type", "")
@@ -503,16 +734,32 @@ class Handler(BaseHTTPRequestHandler):
         else:
             payload = {k: v[0] for k, v in parse_qs(raw).items()}
         try:
-            result = run_setup(payload)
-            code = 200 if result.get("ok") else 400
-            self._send(code, json.dumps(result).encode(), "application/json")
+            if path == "/api/creds":
+                iid = (payload.get("ID_INSTANCE") or "").strip()
+                tok = (payload.get("API_TOKEN") or "").strip()
+                if placeholder(iid) or placeholder(tok):
+                    return self._json(400, {"ok": False, "error": "ID_INSTANCE / API_TOKEN gerekli"})
+                write_env({"ID_INSTANCE": iid, "API_TOKEN": tok})
+                return self._json(200, {"ok": True})
+            if path == "/api/prepare":
+                result = api_prepare(payload)
+                return self._json(200 if result.get("ok") else 400, result)
+            if path == "/api/activate":
+                result = api_activate(payload)
+                return self._json(200 if result.get("ok") else 400, result)
+            if path == "/api/setup":
+                result = run_setup(payload)
+                return self._json(200 if result.get("ok") else 400, result)
+            self._send(404, b"not found", "text/plain")
         except Exception as e:
-            self._send(500, json.dumps({"ok": False, "error": str(e)}).encode(), "application/json")
+            self._json(500, {"ok": False, "error": str(e)})
 
 
 def main():
+    if not ENV_PATH.exists() and (ROOT / ".env.example").exists():
+        ENV_PATH.write_text((ROOT / ".env.example").read_text())
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"Ototext mobile setup on http://0.0.0.0:{PORT}")
+    print(f"Ototext QR kurulum → http://0.0.0.0:{PORT}")
     server.serve_forever()
 
 
