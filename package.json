@@ -1,0 +1,17 @@
+{
+  "name": "green-api-n8n",
+  "version": "1.0.0",
+  "private": true,
+  "description": "n8n + Green API WhatsApp automation stack",
+  "scripts": {
+    "setup": "bash scripts/setup-native.sh",
+    "setup:docker": "bash scripts/setup.sh",
+    "start": "bash scripts/start-native.sh",
+    "stop": "bash scripts/stop-native.sh",
+    "import": "bash scripts/import-workflows-native.sh",
+    "n8n": "n8n"
+  },
+  "dependencies": {
+    "n8n": "^2.32.7"
+  }
+}

@@ -3,16 +3,19 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Kurulum\n1. n8n **Settings → Variables** altında `ID_INSTANCE` ve `API_TOKEN` tanımlayın.\n2. Code düğümündeki 20 adet `chatId` değerini gerçek grup ID'leriyle değiştirin.\n3. `message` metnini güncelleyin.\n4. Schedule Trigger periyodunu ihtiyacınıza göre ayarlayın.\n\n**API:** `https://api.green-api.com/waInstance{{$vars.ID_INSTANCE}}/sendMessage/{{$vars.API_TOKEN}}`\n\n**Rate limit:** Her mesaj öncesi 3 dakika bekleme.",
-        "height": 420,
-        "width": 460,
+        "content": "## Kurulum\n- `ID_INSTANCE` ve `API_TOKEN` `.env` / Docker ortam değişkenlerinden okunur.\n- Code düğümündeki 20 adet `chatId` değerini gerçek grup ID'leriyle değiştirin.\n- Mesaj: `BROADCAST_MESSAGE` env veya Code içindeki `message`.\n- Schedule Trigger periyodunu ihtiyacınıza göre ayarlayın.\n\n**API:** `https://api.green-api.com/waInstance{{$env.ID_INSTANCE}}/sendMessage/{{$env.API_TOKEN}}`\n\n**Rate limit:** Her mesaj öncesi 3 dakika bekleme.\n**Not:** Wait düğümü için workflow Active olmalıdır.",
+        "height": 440,
+        "width": 480,
         "color": 5
       },
       "id": "sticky-s1-notes",
       "name": "Kurulum Notları",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-520, 200]
+      "position": [
+        -520,
+        200
+      ]
     },
     {
       "parameters": {
@@ -29,17 +32,23 @@
       "name": "Schedule Trigger",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 400]
+      "position": [
+        0,
+        400
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// 20 grup chatId + ortak mesaj metni\n// chatId değerlerini kendi Green API grup ID'lerinizle değiştirin\nconst message = \"Merhaba! Bu, n8n üzerinden Green API ile gönderilen zamanlanmış bir grup mesajıdır.\";\n\nconst groupChatIds = [\n  \"120363000000000001@g.us\",\n  \"120363000000000002@g.us\",\n  \"120363000000000003@g.us\",\n  \"120363000000000004@g.us\",\n  \"120363000000000005@g.us\",\n  \"120363000000000006@g.us\",\n  \"120363000000000007@g.us\",\n  \"120363000000000008@g.us\",\n  \"120363000000000009@g.us\",\n  \"120363000000000010@g.us\",\n  \"120363000000000011@g.us\",\n  \"120363000000000012@g.us\",\n  \"120363000000000013@g.us\",\n  \"120363000000000014@g.us\",\n  \"120363000000000015@g.us\",\n  \"120363000000000016@g.us\",\n  \"120363000000000017@g.us\",\n  \"120363000000000018@g.us\",\n  \"120363000000000019@g.us\",\n  \"120363000000000020@g.us\"\n];\n\nreturn groupChatIds.map((chatId, index) => ({\n  json: {\n    index: index + 1,\n    chatId,\n    message\n  }\n}));"
+        "jsCode": "// 20 grup chatId + ortak mesaj metni\n// chatId değerlerini kendi Green API grup ID'lerinizle değiştirin\nconst message = $env.BROADCAST_MESSAGE || \"Merhaba! Bu, n8n üzerinden Green API ile gönderilen zamanlanmış bir grup mesajıdır.\";\n\nconst groupChatIds = [\n  \"120363000000000001@g.us\",\n  \"120363000000000002@g.us\",\n  \"120363000000000003@g.us\",\n  \"120363000000000004@g.us\",\n  \"120363000000000005@g.us\",\n  \"120363000000000006@g.us\",\n  \"120363000000000007@g.us\",\n  \"120363000000000008@g.us\",\n  \"120363000000000009@g.us\",\n  \"120363000000000010@g.us\",\n  \"120363000000000011@g.us\",\n  \"120363000000000012@g.us\",\n  \"120363000000000013@g.us\",\n  \"120363000000000014@g.us\",\n  \"120363000000000015@g.us\",\n  \"120363000000000016@g.us\",\n  \"120363000000000017@g.us\",\n  \"120363000000000018@g.us\",\n  \"120363000000000019@g.us\",\n  \"120363000000000020@g.us\"\n];\n\nreturn groupChatIds.map((chatId, index) => ({\n  json: {\n    index: index + 1,\n    chatId,\n    message\n  }\n}));"
       },
       "id": "code-groups-s1",
       "name": "Grup Listesi Oluştur",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [260, 400]
+      "position": [
+        260,
+        400
+      ]
     },
     {
       "parameters": {
@@ -50,7 +59,10 @@
       "name": "Loop Over Items",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [520, 400]
+      "position": [
+        520,
+        400
+      ]
     },
     {
       "parameters": {
@@ -61,13 +73,16 @@
       "name": "Wait 3 Minutes",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [780, 400],
+      "position": [
+        780,
+        400
+      ],
       "webhookId": "wait-3min-s1-webhook"
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://api.green-api.com/waInstance{{ $vars.ID_INSTANCE }}/sendMessage/{{ $vars.API_TOKEN }}",
+        "url": "=https://api.green-api.com/waInstance{{ $env.ID_INSTANCE }}/sendMessage/{{ $env.API_TOKEN }}",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ chatId: $json.chatId, message: $json.message }) }}",
@@ -79,7 +94,10 @@
       "name": "Green API - sendMessage",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1040, 400],
+      "position": [
+        1040,
+        400
+      ],
       "onError": "continueRegularOutput"
     }
   ],
@@ -151,5 +169,8 @@
   "tags": [],
   "meta": {
     "templateCredsSetupCompleted": true
-  }
+  },
+  "id": "a0de8a27-8d04-43ac-ab2d-df85bcc07e39",
+  "versionId": "c987d1be-e628-4158-b94d-b6ad10517919",
+  "active": false
 }
