@@ -354,14 +354,34 @@ JTI: {row.get('jti')}
     return zip_path
 
 
+def panic_local_bot() -> dict:
+    """Yerel Ototext state — otox/dm/mining/pending durdur. Hesaba girmez."""
+    state_path = ROOT / "data" / "ototext-state.json"
+    if not state_path.is_file():
+        return {"ok": False, "error": "ototext-state.json yok"}
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    for key in ("broadcast", "dm", "mining"):
+        if isinstance(state.get(key), dict):
+            state[key]["running"] = False
+    state["pending"] = None
+    state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return {"ok": True, "message": "local panic applied", "stopped": ["broadcast", "dm", "mining", "pending"]}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print("[seller]", fmt % args)
+
+    def _cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def _json(self, code: int, obj):
         raw = json.dumps(obj, ensure_ascii=False).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
+        self._cors()
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
@@ -374,10 +394,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._cors()
+        self.end_headers()
+
     def do_GET(self):
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
             return self._html(HTML)
+        if path == "/ototext-admin-panel.html":
+            p = ROOT / "ototext-admin-panel.html"
+            if p.is_file():
+                return self._html(p.read_text(encoding="utf-8"))
         if path == "/api/customers":
             return self._json(200, load_customers())
         if path == "/health":
@@ -394,6 +423,17 @@ class Handler(BaseHTTPRequestHandler):
             body = {k: v[0] for k, v in parse_qs(raw).items()}
 
         try:
+            if path == "/api/panic":
+                target = (body.get("target") or "local").strip()
+                if target != "local":
+                    return self._json(
+                        400,
+                        {
+                            "ok": False,
+                            "error": "Şimdilik sadece target=local. Uzak müşteri panic için heartbeat eklenecek.",
+                        },
+                    )
+                return self._json(200, panic_local_bot())
             if path == "/api/create":
                 row = create_license(
                     name=body.get("name") or "Musteri",
