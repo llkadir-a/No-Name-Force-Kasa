@@ -362,6 +362,7 @@ try {
         '',
         `${prefix}otox (metin) — yayın (onay ister)`,
         `${prefix}onay / ${prefix}iptal — onay sistemi`,
+        `${prefix}panic — her şeyi anında durdur`,
         `${prefix}durdur / ${prefix}durum / ${prefix}sure N`,
         `${prefix}zaman-otox 22:00-01:00 — zamanlı yayın`,
         `${prefix}zaman-dm 22:00-01:00 — zamanlı DM`,
@@ -398,6 +399,21 @@ try {
         '',
         `Onayla: ${prefix}onay`,
         `İptal: ${prefix}iptal`,
+      ].join('\n');
+      break;
+    }
+    case 'panic': {
+      state.broadcast.running = false;
+      state.dm.running = false;
+      state.mining.running = false;
+      clearPending(state);
+      await pushLog.call(this, state, 'stop', `PANIC — otox/dm/mining/pending durduruldu`);
+      reply = [
+        '🛑 *PANIC*',
+        'OTOX: DURDU',
+        'DM: DURDU',
+        'Mining: DURDU',
+        'Bekleyen onay: temizlendi',
       ].join('\n');
       break;
     }

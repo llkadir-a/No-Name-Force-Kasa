@@ -9,6 +9,7 @@ WhatsApp bot — `!` prefix komutlarla yönetilir. Bot numarası otomatik admind
 | `!yardim` | Ana menü |
 | `!otox (metin)` | Yayın başlat (onay ister) |
 | `!onay` / `!iptal` | Onay sistemi |
+| `!panic` | Her şeyi anında durdur |
 | `!zaman-otox 22:00-01:00` | Zamanlı yayın penceresi |
 | `!zaman-dm 22:00-01:00` | Zamanlı DM penceresi |
 | `!metin (yazı)` | Zamanlı akışta metin gir |
