@@ -19,6 +19,12 @@ if [[ ! -f .env ]]; then
   cp .env.example .env
 fi
 
+echo "-> License check..."
+if ! python3 "$ROOT_DIR/scripts/check-license.py"; then
+  echo "ERROR: Geçerli lisans yok. Satıcı paketini kullan veya LICENSE_SKIP=1 (sadece geliştirici)."
+  exit 1
+fi
+
 if [[ ! -x "$N8N_BIN" ]]; then
   echo "-> Installing n8n locally..."
   npm install n8n --save
@@ -61,7 +67,9 @@ BROADCAST_GROUPS="$(get_env BROADCAST_GROUPS)"
 BOT_PREFIX="$(get_env BOT_PREFIX)"
 BOT_ADMINS="$(get_env BOT_ADMINS)"
 WEBHOOK_PUBLIC_URL="$(get_env WEBHOOK_PUBLIC_URL)"
-export BROADCAST_GROUPS BOT_PREFIX BOT_ADMINS WEBHOOK_PUBLIC_URL
+LICENSE_KEY="$(get_env LICENSE_KEY)"
+OTOTEXT_LICENSE_SECRET="$(get_env OTOTEXT_LICENSE_SECRET)"
+export BROADCAST_GROUPS BOT_PREFIX BOT_ADMINS WEBHOOK_PUBLIC_URL LICENSE_KEY OTOTEXT_LICENSE_SECRET
 
 if [[ "${ID_INSTANCE}" == "YOUR_INSTANCE_ID" || "${API_TOKEN}" == "YOUR_API_TOKEN_INSTANCE" ]]; then
   echo "WARNING: ID_INSTANCE / API_TOKEN still placeholders in .env"

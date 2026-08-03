@@ -9,3 +9,9 @@ node_modules/
 package-lock.json
 data/ototext-state.json
 data/worker-workflow-id.txt
+seller/.license-secret
+seller/customers.json
+seller/kits/
+LICENSE_KEY.txt
+LICENSE_SECRET.txt
+license.json

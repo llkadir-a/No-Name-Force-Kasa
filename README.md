@@ -33,8 +33,14 @@ WhatsApp bot — `!` prefix komutlarla yönetilir. Bot numarası otomatik admind
 | `!prefix-ekle (p)` | Ek prefix |
 | `!prefix-cikar (p)` / `!prefix cikar (p)` | Prefix çıkar |
 | `!istatistik` | Genel istatistik |
+| `!lisans` | Lisans durumu |
 
 Sadece adminler kullanabilir. Bot’un kendi numarası otomatik admin.
+
+## Satış (müşteri kopyası)
+
+Aynı sistemi satmak için: `bash scripts/start-seller-panel.sh` → lisans üret → ZIP kit indir.  
+Detay: [`SATIS.md`](SATIS.md)
 
 ## Telefonla kurulum
 

@@ -132,6 +132,10 @@ def write_env(updates: dict[str, str]) -> None:
         "N8N_OWNER_PASSWORD",
         "N8N_OWNER_FIRST_NAME",
         "N8N_OWNER_LAST_NAME",
+        "LICENSE_KEY",
+        "OTOTEXT_LICENSE_SECRET",
+        "LICENSE_SKIP",
+        "NODE_FUNCTION_ALLOW_BUILTIN",
     ]
     lines, seen = [], set()
     for k in keys:
@@ -384,8 +388,28 @@ def import_and_activate(cookie: str, activate_names: set[str] | None = None) -> 
     return "\n".join(lines)
 
 
+def check_license() -> tuple[bool, str]:
+    try:
+        r = subprocess.run(
+            ["python3", str(ROOT / "scripts" / "check-license.py")],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            env=os.environ.copy(),
+        )
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        return r.returncode == 0, out or ("ok" if r.returncode == 0 else "lisans hatası")
+    except Exception as e:
+        return False, str(e)
+
+
 def run_setup(payload: dict) -> dict:
     logs: list[str] = []
+    ok_lic, lic_msg = check_license()
+    logs.append("0) License: " + lic_msg)
+    if not ok_lic:
+        return {"ok": False, "error": "Geçerli lisans yok", "log": "\n".join(logs)}
+
     instance = (payload.get("ID_INSTANCE") or "").strip()
     token = (payload.get("API_TOKEN") or "").strip()
     if not instance or not token:

@@ -375,7 +375,32 @@ try {
         `${prefix}davetler / ${prefix}filtre / ${prefix}black / ${prefix}mining`,
         `${prefix}katil / ${prefix}tumkatil / ${prefix}karakter ayarla`,
         `${prefix}admin / ${prefix}prefix / ${prefix}istatistik`,
+        `${prefix}lisans — lisans durumu`,
       ].join('\n');
+      break;
+    }
+    case 'lisans': {
+      const key = (($env.LICENSE_KEY || '') + '').trim();
+      if (!key || !key.includes('.')) {
+        reply = 'Lisans anahtarı yok (LICENSE_KEY). Satıcı paketini kontrol et.';
+        break;
+      }
+      try {
+        const body = key.split('.')[0];
+        const pad = body.length % 4 === 0 ? '' : '='.repeat(4 - (body.length % 4));
+        const jsonStr = Buffer.from(body.replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64').toString('utf8');
+        const p = JSON.parse(jsonStr);
+        const left = Math.max(0, Math.floor((Number(p.exp || 0) - Date.now() / 1000) / 86400));
+        reply = [
+          '*Lisans*',
+          `Müşteri: ${p.name || '-'}`,
+          `Plan: ${p.plan || '-'}`,
+          `Kalan gün: ${left}`,
+          `Ürün: ${p.product || 'ototext'}`,
+        ].join('\n');
+      } catch (e) {
+        reply = 'Lisans anahtarı okunamadı.';
+      }
       break;
     }
     case 'otox': {
