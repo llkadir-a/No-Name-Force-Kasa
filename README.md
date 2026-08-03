@@ -10,6 +10,16 @@ Hazır n8n stack + 2 Green API workflow. Bu ortamda **native** olarak çalışı
   - Senaryo 1 — Zamanlanmış Grup Broadcast
   - Senaryo 2 — Grup Katılımcı Senkronizasyonu
 
+## Telefonla kurulum (tek form)
+
+```bash
+bash scripts/start-mobile-setup.sh
+```
+
+Çıkan `trycloudflare.com` linkini telefonda aç → `ID_INSTANCE` + `API_TOKEN` yapıştır → **Kur ve Aktif Et**.
+
+Script Green API'yi doğrular, n8n'i yeniden başlatır, workflow'ları import/aktif eder.
+
 ## 1) Credential doldur
 
 ```bash
