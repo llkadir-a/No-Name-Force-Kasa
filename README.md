@@ -10,11 +10,15 @@ WhatsApp bot — Green API numarana bağlanır, prefix komutlarla yönetilir.
 | `/ping` | Bot ayakta mı |
 | `/status` | Green API instance durumu |
 | `/id` | chatId / sender bilgin |
-| `/groups` | Kayıtlı broadcast grupları |
-| `/broadcast <mesaj>` | Gruplara mesaj at |
-| `/sync` | Kaynak→hedef sync bilgilendirmesi |
+| `/groups [sayfa]` | Grup id, isim, üye sayısı (sayfa sayfa) |
+| `/blacklist` | Kara listeyi göster |
+| `/blacklist <no|id>` | Grubu kara listeye al — broadcast atlar |
+| `/unblacklist <no|id>` | Kara listeden çıkar |
+| `/broadcast <mesaj>` | Gruplara mesaj (blacklist hariç) |
+| `/sync` | Sync bilgilendirmesi |
 
 Sadece `BOT_ADMINS` numaraları komut çalıştırabilir.
+
 
 ## Telefonla kurulum
 

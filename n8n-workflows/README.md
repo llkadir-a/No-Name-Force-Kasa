@@ -2,11 +2,11 @@
 
 ## Bot
 - `ototext-bot-commands.json` → **Ototext Bot — Prefix Komutlar**
-  - Webhook path: `ototext-bot`
-  - Prefix komutlar: help, ping, status, id, groups, broadcast, sync
+  - Webhook: `ototext-bot`
+  - `/groups [sayfa]` → id, isim, üye (sayfalı)
+  - `/blacklist <no|id>` → broadcast bu gruplara gitmez
+  - `/unblacklist <no|id>`
 
-## Yardımcı senaryolar
+## Yardımcı
 - `scenario-1-scheduled-group-broadcast.json`
 - `scenario-2-sync-group-participants.json`
-
-Credential’lar `.env` → `$env.ID_INSTANCE`, `$env.API_TOKEN`, `$env.BOT_PREFIX`, `$env.BOT_ADMINS`, `$env.BROADCAST_GROUPS`
