@@ -311,6 +311,7 @@ def green_api_set_webhook(instance: str, token: str, webhook_url: str) -> str:
     body = {
         "webhookUrl": webhook_url,
         "incomingWebhook": "yes",
+        "incomingCallWebhook": "yes",
         "outgoingWebhook": "no",
         "outgoingAPIMessageWebhook": "no",
         "outgoingMessageWebhook": "no",

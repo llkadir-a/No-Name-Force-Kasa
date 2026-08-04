@@ -45,6 +45,16 @@ function defaultState() {
     invites: [],
     logGroupId: '',
     pending: null,
+    guard: {
+      enabled: false,
+      groups: {},
+      stickerLimit: 4,
+      stickerWindowMs: 15000,
+      kickOnCall: true,
+      kickOnStickerSpam: true,
+      protectAdmins: true,
+      stickerHits: {},
+    },
     daily: { dayKey: '', broadcastSent: 0, dmSent: 0, errors: 0, starts: 0, stops: 0, events: [] },
     stats: { commands: 0, broadcastSent: 0, dmSent: 0, joins: 0, startedAt: Date.now() },
   };
@@ -76,6 +86,18 @@ function ensureState() {
   s.dm.windowEnd = s.dm.windowEnd || '';
   s.numbers = Array.isArray(s.numbers) ? s.numbers : [];
   s.activeNumberId = s.activeNumberId || '';
+  s.guard = Object.assign({
+    enabled: false,
+    groups: {},
+    stickerLimit: 4,
+    stickerWindowMs: 15000,
+    kickOnCall: true,
+    kickOnStickerSpam: true,
+    protectAdmins: true,
+    stickerHits: {},
+  }, s.guard || {});
+  if (!s.guard.groups || typeof s.guard.groups !== 'object') s.guard.groups = {};
+  if (!s.guard.stickerHits || typeof s.guard.stickerHits !== 'object') s.guard.stickerHits = {};
   ensureNumbers(s);
   return s;
 }
@@ -127,6 +149,99 @@ function formatNumberLine(n, i, activeId) {
   const mark = n.id === activeId ? ' ✅' : '';
   const phone = n.wid ? String(n.wid).replace('@c.us', '') : '-';
   return `${i + 1}. ${n.name || 'Numara'}${mark}\n   tel: ${phone}\n   instance: ${n.instanceId}`;
+}
+
+function guardApplies(state, groupId) {
+  if (!state.guard?.enabled) return false;
+  if (!groupId || !String(groupId).endsWith('@g.us')) return false;
+  const keys = Object.keys(state.guard.groups || {});
+  if (!keys.length) return true; // tüm gruplar (bot admin olmalı)
+  return !!state.guard.groups[groupId];
+}
+
+function guardProtected(state, participantId) {
+  if (!state.guard?.protectAdmins) return false;
+  const p = normId(participantId);
+  if (!p) return true;
+  if (state.admins.includes(p)) return true;
+  if (normId(state.botWid) === p) return true;
+  return false;
+}
+
+async function guardKick(state, groupId, participantId, reason) {
+  const pid = normId(participantId);
+  if (!groupId || !pid) return { ok: false, error: 'eksik id' };
+  if (guardProtected(state, pid)) return { ok: false, error: 'korumalı (admin/bot)' };
+  try {
+    const res = await api.call(this, 'POST', 'removeGroupParticipant', {
+      groupId,
+      participantChatId: pid,
+    });
+    const ok = res && res.removeParticipant !== false;
+    await pushLog.call(this, state, 'guard', `Kick ${pid} @ ${groupId} | ${reason} | ok=${ok}`);
+    return { ok, res };
+  } catch (e) {
+    await pushLog.call(this, state, 'error', `Guard kick fail: ${e.message || e}`);
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function handleGuardSticker(state, body) {
+  const g = state.guard;
+  if (!g.kickOnStickerSpam) return null;
+  const chatId = body.senderData?.chatId || '';
+  const sender = body.senderData?.sender || '';
+  if (!guardApplies(state, chatId)) return null;
+  const key = `${chatId}|${normId(sender)}`;
+  const now = Date.now();
+  const windowMs = Math.max(3000, Number(g.stickerWindowMs) || 15000);
+  const limit = Math.max(2, Number(g.stickerLimit) || 4);
+  let hits = Array.isArray(g.stickerHits[key]) ? g.stickerHits[key] : [];
+  hits = hits.filter((t) => now - t <= windowMs);
+  hits.push(now);
+  g.stickerHits[key] = hits;
+  // bellek temizliği
+  const keys = Object.keys(g.stickerHits);
+  if (keys.length > 500) {
+    for (const k of keys.slice(0, keys.length - 400)) delete g.stickerHits[k];
+  }
+  if (hits.length < limit) return null;
+  g.stickerHits[key] = [];
+  const kicked = await guardKick.call(this, state, chatId, sender, `sticker-spam x${hits.length}/${windowMs}ms`);
+  if (!kicked.ok) return null;
+  return {
+    chatId,
+    reply: `🛡️ Guard: sticker spam — çıkarıldı\n${normId(sender)}`,
+  };
+}
+
+async function handleGuardCall(state, body) {
+  const g = state.guard;
+  if (!g.kickOnCall) return null;
+  const status = String(body.status || '').toLowerCase();
+  if (status && status !== 'offer') return null;
+  const from = normId(body.from || body.senderData?.sender || '');
+  const chatId = body.chatId || body.senderData?.chatId || body.idGroup || '';
+  // Grup araması: chatId grup ise o gruptan at
+  if (chatId && String(chatId).endsWith('@g.us') && guardApplies(state, chatId)) {
+    const kicked = await guardKick.call(this, state, chatId, from, 'group-call');
+    if (!kicked.ok) return null;
+    return { chatId, reply: `🛡️ Guard: grup araması — çıkarıldı\n${from}` };
+  }
+  // Bazı webhook'larda sadece arayan gelir: korumalı gruplarda bu kişiyi ara
+  if (!from) return null;
+  const targets = Object.keys(g.groups || {}).filter((id) => g.groups[id]);
+  const groupIds = targets.length ? targets : [];
+  // spesifik grup listesi yoksa güvenli taraf: sadece bilinen guarded gruplar
+  if (!groupIds.length) return null;
+  const replies = [];
+  for (const gid of groupIds) {
+    if (!guardApplies(state, gid)) continue;
+    const kicked = await guardKick.call(this, state, gid, from, 'call-offer');
+    if (kicked.ok) replies.push(gid);
+  }
+  if (!replies.length) return null;
+  return { chatId: replies[0], reply: `🛡️ Guard: arama — çıkarıldı\n${from}` };
 }
 
 function normalizePrefix(raw) {
@@ -365,14 +480,31 @@ else {
 }
 await ensureBotAdmin.call(this, state, body.instanceData?.wid, sessionNumber);
 
-// Capture invite links from any incoming message
+// Guard: grup araması / gelen arama
+if (body.typeWebhook === 'incomingCall') {
+  const guardReply = await handleGuardCall.call(this, state, body);
+  saveState(state);
+  if (guardReply) {
+    return [{
+      json: {
+        chatId: guardReply.chatId,
+        reply: guardReply.reply,
+        instanceId: CURRENT_CREDS.instanceId,
+        apiToken: CURRENT_CREDS.apiToken,
+      },
+    }];
+  }
+  return [];
+}
+
+// Capture invite links + guard stickers / call messages
 if (body.typeWebhook === 'incomingMessageReceived') {
-  const md = body.messageData || {};
-  let text = '';
-  if (md.typeMessage === 'textMessage') text = md.textMessageData?.textMessage || '';
-  if (md.typeMessage === 'extendedTextMessage') text = md.extendedTextMessageData?.text || '';
-  if (md.typeMessage === 'groupInviteMessage') {
-    const d = md.groupInviteMessageData || {};
+  const md0 = body.messageData || {};
+  let text0 = '';
+  if (md0.typeMessage === 'textMessage') text0 = md0.textMessageData?.textMessage || '';
+  if (md0.typeMessage === 'extendedTextMessage') text0 = md0.extendedTextMessageData?.text || '';
+  if (md0.typeMessage === 'groupInviteMessage') {
+    const d = md0.groupInviteMessageData || {};
     const link = d.inviteCode ? `https://chat.whatsapp.com/${d.inviteCode}` : '';
     if (link) {
       state.invites.unshift({
@@ -383,15 +515,53 @@ if (body.typeWebhook === 'incomingMessageReceived') {
         at: Date.now(),
       });
       state.invites = state.invites.slice(0, 200);
-      saveState(state);
     }
   }
-  for (const link of extractInviteLinks(text)) {
+  for (const link of extractInviteLinks(text0)) {
     if (!state.invites.some((x) => x.link === link)) {
       state.invites.unshift({ link, groupName: '', groupJid: '', from: body.senderData?.sender || '', at: Date.now() });
     }
   }
   state.invites = state.invites.slice(0, 200);
+
+  // sticker spam guard
+  if (md0.typeMessage === 'stickerMessage') {
+    const guardReply = await handleGuardSticker.call(this, state, body);
+    saveState(state);
+    if (guardReply) {
+      return [{
+        json: {
+          chatId: guardReply.chatId,
+          reply: guardReply.reply,
+          instanceId: CURRENT_CREDS.instanceId,
+          apiToken: CURRENT_CREDS.apiToken,
+        },
+      }];
+    }
+    return [];
+  }
+
+  // grup içi arama mesajı (varsa)
+  const tmsg = String(md0.typeMessage || '').toLowerCase();
+  if (tmsg.includes('call') && state.guard?.kickOnCall) {
+    const chatId = body.senderData?.chatId || '';
+    const sender = body.senderData?.sender || '';
+    if (guardApplies(state, chatId)) {
+      const kicked = await guardKick.call(this, state, chatId, sender, 'call-message');
+      saveState(state);
+      if (kicked.ok) {
+        return [{
+          json: {
+            chatId,
+            reply: `🛡️ Guard: grup araması — çıkarıldı\n${normId(sender)}`,
+            instanceId: CURRENT_CREDS.instanceId,
+            apiToken: CURRENT_CREDS.apiToken,
+          },
+        }];
+      }
+      return [];
+    }
+  }
 }
 
 if (body.typeWebhook && body.typeWebhook !== 'incomingMessageReceived') {
@@ -431,6 +601,13 @@ if (command === 'numara' && args) {
   const a0 = (args.split(/\s+/)[0] || '').toLowerCase();
   if (['ekle', 'sil', 'aktif', 'liste', 'yenile'].includes(a0)) {
     command = 'numara-' + a0;
+    args = args.slice(a0.length).trim();
+  }
+}
+if (command === 'guard' && args) {
+  const a0 = (args.split(/\s+/)[0] || '').toLowerCase();
+  if (['ac', 'aç', 'kapat', 'liste', 'sticker', 'grup', 'durum'].includes(a0)) {
+    command = 'guard-' + (a0 === 'aç' ? 'ac' : a0);
     args = args.slice(a0.length).trim();
   }
 }
@@ -475,8 +652,84 @@ try {
         `${prefix}katil / ${prefix}tumkatil / ${prefix}karakter ayarla`,
         `${prefix}admin / ${prefix}prefix / ${prefix}istatistik`,
         `${prefix}numara — çoklu WhatsApp numarası`,
+        `${prefix}guard — grup koruma (sticker spam / arama)`,
         `${prefix}lisans — lisans durumu`,
       ].join('\n');
+      break;
+    }
+    case 'guard': {
+      const g = state.guard;
+      const gcount = Object.keys(g.groups || {}).filter((k) => g.groups[k]).length;
+      reply = [
+        '*🛡️ Guard Menü*',
+        `${prefix}guard ac — tüm admin olduğun gruplarda aç`,
+        `${prefix}guard kapat — kapat`,
+        `${prefix}guard grup ac — sadece bu grupta aç`,
+        `${prefix}guard grup kapat — bu grubu çıkar`,
+        `${prefix}guard liste — korunan gruplar`,
+        `${prefix}guard sticker 4 — sticker spam limiti`,
+        '',
+        `Durum: ${g.enabled ? 'AÇIK' : 'KAPALI'}`,
+        `Sticker spam kick: ${g.kickOnStickerSpam ? 'on' : 'off'} (limit ${g.stickerLimit}/${Math.round((g.stickerWindowMs||15000)/1000)}sn)`,
+        `Arama kick: ${g.kickOnCall ? 'on' : 'off'}`,
+        `Özel grup listesi: ${gcount ? gcount + ' grup' : 'yok (tüm gruplar)'}`,
+        '',
+        'Bot o grupta admin olmalı; değilse kick çalışmaz.',
+      ].join('\n');
+      break;
+    }
+    case 'guard-ac': {
+      state.guard.enabled = true;
+      reply = '🛡️ Guard AÇIK.\nSticker spam + grup araması → çıkarma.\nBotun admin olduğu gruplarda çalışır.';
+      break;
+    }
+    case 'guard-kapat': {
+      state.guard.enabled = false;
+      reply = '🛡️ Guard KAPALI.';
+      break;
+    }
+    case 'guard-liste':
+    case 'guard-durum': {
+      const g = state.guard;
+      const ids = Object.keys(g.groups || {}).filter((k) => g.groups[k]);
+      reply = [
+        `*🛡️ Guard* ${g.enabled ? 'AÇIK' : 'KAPALI'}`,
+        `Sticker: ${g.kickOnStickerSpam ? 'on' : 'off'} limit=${g.stickerLimit}`,
+        `Arama: ${g.kickOnCall ? 'on' : 'off'}`,
+        ids.length ? ('Gruplar:\n' + ids.map((id, i) => `${i + 1}. ${id}`).join('\n')) : 'Özel liste yok → tüm gruplar (adminlik şart).',
+      ].join('\n');
+      break;
+    }
+    case 'guard-grup': {
+      const a0 = (args.split(/\s+/)[0] || '').toLowerCase();
+      const restG = args.slice(a0.length).trim().replace(/[()]/g, '');
+      let gid = restG;
+      if (!gid && String(chatId).endsWith('@g.us')) gid = chatId;
+      if (!gid.endsWith('@g.us')) {
+        reply = `Kullanım (grupta yaz): ${prefix}guard grup ac\nveya ${prefix}guard grup ac 120363...@g.us`;
+        break;
+      }
+      if (a0 === 'ac' || a0 === 'aç' || a0 === 'on') {
+        state.guard.enabled = true;
+        state.guard.groups[gid] = true;
+        reply = `🛡️ Bu grup korumada:\n${gid}`;
+      } else if (a0 === 'kapat' || a0 === 'off') {
+        delete state.guard.groups[gid];
+        reply = `🛡️ Grup korumadan çıkarıldı:\n${gid}`;
+      } else {
+        reply = `Kullanım: ${prefix}guard grup ac | ${prefix}guard grup kapat`;
+      }
+      break;
+    }
+    case 'guard-sticker': {
+      const n = parseInt(args, 10);
+      if (!Number.isFinite(n) || n < 2 || n > 30) {
+        reply = `Kullanım: ${prefix}guard sticker 4\n(2-30 arası, pencere 15 sn)`;
+        break;
+      }
+      state.guard.stickerLimit = n;
+      state.guard.kickOnStickerSpam = true;
+      reply = `✅ Sticker spam limiti: ${n} / 15 sn → kick`;
       break;
     }
     case 'numara': {

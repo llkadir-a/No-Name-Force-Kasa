@@ -60,6 +60,16 @@
   ],
   "logGroupId": "",
   "pending": null,
+  "guard": {
+    "enabled": false,
+    "groups": {},
+    "stickerLimit": 4,
+    "stickerWindowMs": 15000,
+    "kickOnCall": true,
+    "kickOnStickerSpam": true,
+    "protectAdmins": true,
+    "stickerHits": {}
+  },
   "daily": {
     "dayKey": "",
     "broadcastSent": 0,
