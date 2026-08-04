@@ -2,6 +2,8 @@
 
 WhatsApp bot — `!` prefix komutlarla yönetilir. Bot numarası otomatik admindir.
 
+**Tam ürün tanıtımı (tüm özellikler):** [`TANITIM.md`](TANITIM.md)
+
 ## Komutlar
 
 | Komut | Açıklama |
