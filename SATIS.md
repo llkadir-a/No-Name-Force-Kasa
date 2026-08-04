@@ -8,13 +8,15 @@ Bu repo hem **senin ana sistemin** hem de **satacağın müşteri kopyalarının
 bash scripts/start-seller-panel.sh
 ```
 
-Tarayıcıda: `http://127.0.0.1:8790`
+Tarayıcıda: `http://127.0.0.1:8790` — tam **Control Center** (`ototext-admin-panel.html`)
 
-1. Müşteri adı yaz
-2. Kaç günlük lisans (30 / 90 / 365 / lifetime için 36500)
-3. Plan seç (standard / pro / lifetime)
-4. **Lisans Üret**
-5. Listeden **ZIP Kit** → müşteriye gönder
+Bot ayarları (log kanalı, otox, DM, guard, numaralar, adminler, JSON) + lisanslar aynı panelden.
+
+Lisans satışı:
+1. Sol menü → **Lisanslar**
+2. Müşteri adı / gün / plan
+3. **Lisans Üret + ZIP**
+4. ZIP’i müşteriye gönder
 
 Panel kayıtları: `seller/customers.json`  
 İptal: panelden **İptal** (yeni kit üretilmez; online `/api/verify` iptali görür)

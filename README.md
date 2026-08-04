@@ -49,10 +49,21 @@ Ban/kısıtlama erken uyarı: `blocked` / `suspended` / `yellowCard` / `notAutho
 
 Sadece adminler kullanabilir. Bot’un kendi numarası otomatik admin.
 
+## Admin Control Center
+
+```bash
+bash scripts/start-seller-panel.sh
+```
+
+Tarayıcı: `http://127.0.0.1:8790` (veya `/admin`)
+
+Panelden ayarlanır: log kanalı, prefix, otox/DM, guard, numaralar, admin/blacklist, panic, lisanslar, ham JSON.  
+API: `GET/POST /api/bot/state` · `POST /api/bot/patch` · `POST /api/bot/action`  
+Taşınabilir dosya: `ototext-admin-panel.html`
+
 ## Satış (müşteri kopyası)
 
-Aynı sistemi satmak için: `bash scripts/start-seller-panel.sh` → lisans üret → ZIP kit indir.  
-Detay: [`SATIS.md`](SATIS.md)
+Aynı panilden lisans üret → ZIP kit indir. Detay: [`SATIS.md`](SATIS.md)
 
 ## Telefonla kurulum
 

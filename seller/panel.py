@@ -24,6 +24,29 @@ from license import (
 SELLER_DIR = Path(__file__).resolve().parent
 ROOT = SELLER_DIR.parent
 PORT = int(os.environ.get("SELLER_PORT", "8790"))
+STATE_PATH = ROOT / "data" / "ototext-state.json"
+
+# Admin panelden patchlenebilir üst alanlar (her şeyi buradan yönet)
+BOT_PATCHABLE = {
+    "admins",
+    "botWid",
+    "mainPrefix",
+    "prefixes",
+    "numbers",
+    "activeNumberId",
+    "broadcast",
+    "dm",
+    "mining",
+    "filters",
+    "blacklist",
+    "invites",
+    "logGroupId",
+    "pending",
+    "guard",
+    "healthWatch",
+    "daily",
+    "stats",
+}
 
 HTML = """<!DOCTYPE html>
 <html lang="tr">
@@ -354,18 +377,247 @@ JTI: {row.get('jti')}
     return zip_path
 
 
+def default_bot_state() -> dict:
+    return {
+        "admins": [],
+        "botWid": "",
+        "mainPrefix": "!",
+        "prefixes": ["!"],
+        "numbers": [],
+        "activeNumberId": "",
+        "broadcast": {
+            "running": False,
+            "text": "",
+            "texts": [],
+            "textIndex": 0,
+            "intervalMin": 3,
+            "index": 0,
+            "sent": 0,
+            "lastSendAt": 0,
+            "startedAt": 0,
+            "cycle": 0,
+            "windowStart": "",
+            "windowEnd": "",
+        },
+        "dm": {
+            "running": False,
+            "text": "",
+            "groupId": "",
+            "intervalMin": 3,
+            "queue": [],
+            "index": 0,
+            "sent": 0,
+            "failed": 0,
+            "lastSendAt": 0,
+            "startedAt": 0,
+            "windowStart": "",
+            "windowEnd": "",
+        },
+        "mining": {
+            "running": False,
+            "targetGroupId": "",
+            "targetName": "",
+            "members": 0,
+            "addedToday": 0,
+            "pending": 0,
+            "totalTarget": 0,
+            "durationMin": 0,
+            "startedAt": 0,
+            "lastAddAt": 0,
+            "dayKey": "",
+        },
+        "filters": {"minUye": 0},
+        "blacklist": [],
+        "invites": [],
+        "logGroupId": "",
+        "pending": None,
+        "guard": {
+            "enabled": False,
+            "groups": {},
+            "stickerLimit": 4,
+            "stickerWindowMs": 15000,
+            "kickOnCall": True,
+            "kickOnStickerSpam": True,
+            "lockOnIncident": True,
+            "protectAdmins": True,
+            "stickerHits": {},
+            "lockedGroups": {},
+        },
+        "healthWatch": {"byInstance": {}, "lastCheckAt": 0},
+        "daily": {
+            "dayKey": "",
+            "broadcastSent": 0,
+            "dmSent": 0,
+            "errors": 0,
+            "starts": 0,
+            "stops": 0,
+            "events": [],
+        },
+        "stats": {
+            "commands": 0,
+            "broadcastSent": 0,
+            "dmSent": 0,
+            "joins": 0,
+            "startedAt": 0,
+        },
+    }
+
+
+def load_bot_state() -> dict:
+    if not STATE_PATH.is_file():
+        state = default_bot_state()
+        STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        save_bot_state(state)
+        return state
+    return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+
+
+def save_bot_state(state: dict) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STATE_PATH.write_text(
+        json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _mask_secret(val: str) -> str:
+    s = str(val or "")
+    if len(s) <= 8:
+        return "***" if s else ""
+    return s[:3] + "***" + s[-4:]
+
+
+def redact_bot_state(state: dict) -> dict:
+    """GET yanıtında API token'ları maskele."""
+    out = json.loads(json.dumps(state))
+    nums = out.get("numbers")
+    if isinstance(nums, list):
+        for n in nums:
+            if isinstance(n, dict) and n.get("apiToken"):
+                n["apiTokenMasked"] = _mask_secret(n.get("apiToken"))
+                n["apiToken"] = n["apiTokenMasked"]
+    return out
+
+
+def deep_merge(dst, src):
+    if not isinstance(dst, dict) or not isinstance(src, dict):
+        return src
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            deep_merge(dst[k], v)
+        else:
+            dst[k] = v
+    return dst
+
+
+def restore_masked_tokens(incoming_numbers, existing_numbers):
+    """Panel maskeli token gönderirse eski token korunur."""
+    if not isinstance(incoming_numbers, list):
+        return incoming_numbers
+    by_id = {}
+    if isinstance(existing_numbers, list):
+        for n in existing_numbers:
+            if isinstance(n, dict) and n.get("id"):
+                by_id[str(n["id"])] = n
+            if isinstance(n, dict) and n.get("instanceId"):
+                by_id[str(n["instanceId"])] = n
+    for n in incoming_numbers:
+        if not isinstance(n, dict):
+            continue
+        tok = str(n.get("apiToken") or "")
+        if "***" in tok or tok == "":
+            old = by_id.get(str(n.get("id") or "")) or by_id.get(str(n.get("instanceId") or ""))
+            if old and old.get("apiToken"):
+                n["apiToken"] = old["apiToken"]
+        n.pop("apiTokenMasked", None)
+    return incoming_numbers
+
+
+def apply_bot_patch(patch: dict, *, replace: bool = False) -> dict:
+    if not isinstance(patch, dict):
+        raise ValueError("patch object olmalı")
+    current = load_bot_state()
+    if replace:
+        base = default_bot_state()
+        for k, v in patch.items():
+            if k in BOT_PATCHABLE:
+                base[k] = v
+        if isinstance(base.get("numbers"), list):
+            base["numbers"] = restore_masked_tokens(base["numbers"], current.get("numbers"))
+        save_bot_state(base)
+        return base
+
+    for k, v in patch.items():
+        if k not in BOT_PATCHABLE:
+            continue
+        if k == "numbers" and isinstance(v, list):
+            current["numbers"] = restore_masked_tokens(v, current.get("numbers"))
+        elif isinstance(v, dict) and isinstance(current.get(k), dict):
+            deep_merge(current[k], v)
+        else:
+            current[k] = v
+    save_bot_state(current)
+    return current
+
+
 def panic_local_bot() -> dict:
     """Yerel Ototext state — otox/dm/mining/pending durdur. Hesaba girmez."""
-    state_path = ROOT / "data" / "ototext-state.json"
-    if not state_path.is_file():
+    if not STATE_PATH.is_file():
         return {"ok": False, "error": "ototext-state.json yok"}
-    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state = load_bot_state()
     for key in ("broadcast", "dm", "mining"):
         if isinstance(state.get(key), dict):
             state[key]["running"] = False
     state["pending"] = None
-    state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    save_bot_state(state)
     return {"ok": True, "message": "local panic applied", "stopped": ["broadcast", "dm", "mining", "pending"]}
+
+
+def bot_action(action: str, body: dict | None = None) -> dict:
+    body = body or {}
+    state = load_bot_state()
+    act = (action or "").strip().lower()
+    if act == "panic":
+        return panic_local_bot()
+    if act == "stop_broadcast":
+        state.setdefault("broadcast", {})["running"] = False
+        save_bot_state(state)
+        return {"ok": True, "action": act}
+    if act == "stop_dm":
+        state.setdefault("dm", {})["running"] = False
+        save_bot_state(state)
+        return {"ok": True, "action": act}
+    if act == "stop_mining":
+        state.setdefault("mining", {})["running"] = False
+        save_bot_state(state)
+        return {"ok": True, "action": act}
+    if act == "start_broadcast":
+        state.setdefault("broadcast", {})["running"] = True
+        state["broadcast"]["startedAt"] = state["broadcast"].get("startedAt") or __import__("time").time() * 1000
+        save_bot_state(state)
+        return {"ok": True, "action": act}
+    if act == "start_dm":
+        state.setdefault("dm", {})["running"] = True
+        save_bot_state(state)
+        return {"ok": True, "action": act}
+    if act == "clear_pending":
+        state["pending"] = None
+        save_bot_state(state)
+        return {"ok": True, "action": act}
+    if act == "clear_invites":
+        state["invites"] = []
+        save_bot_state(state)
+        return {"ok": True, "action": act}
+    if act == "clear_daily_events":
+        state.setdefault("daily", {})["events"] = []
+        save_bot_state(state)
+        return {"ok": True, "action": act}
+    if act == "set_log_group":
+        gid = str(body.get("logGroupId") or "").strip()
+        state["logGroupId"] = gid
+        save_bot_state(state)
+        return {"ok": True, "action": act, "logGroupId": gid}
+    raise ValueError(f"bilinmeyen action: {action}")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -374,7 +626,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def _json(self, code: int, obj):
@@ -399,30 +651,93 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
-    def do_GET(self):
-        path = urlparse(self.path).path
-        if path in ("/", "/index.html"):
-            return self._html(HTML)
-        if path == "/ototext-admin-panel.html":
-            p = ROOT / "ototext-admin-panel.html"
-            if p.is_file():
-                return self._html(p.read_text(encoding="utf-8"))
-        if path == "/api/customers":
-            return self._json(200, load_customers())
-        if path == "/health":
-            return self._json(200, {"ok": True})
-        self._json(404, {"error": "not found"})
-
-    def do_POST(self):
-        path = urlparse(self.path).path
+    def _read_body(self):
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length).decode()
         try:
-            body = json.loads(raw or "{}")
+            return json.loads(raw or "{}")
         except Exception:
-            body = {k: v[0] for k, v in parse_qs(raw).items()}
+            return {k: v[0] for k, v in parse_qs(raw).items()}
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path in ("/", "/index.html", "/admin", "/ototext-admin-panel.html"):
+            p = ROOT / "ototext-admin-panel.html"
+            if p.is_file():
+                return self._html(p.read_text(encoding="utf-8"))
+            return self._html(HTML)
+        if path == "/sales":
+            return self._html(HTML)
+        if path == "/api/customers":
+            return self._json(200, load_customers())
+        if path == "/api/bot/state":
+            try:
+                state = load_bot_state()
+                return self._json(
+                    200,
+                    {
+                        "ok": True,
+                        "state": redact_bot_state(state),
+                        "path": str(STATE_PATH),
+                        "patchable": sorted(BOT_PATCHABLE),
+                    },
+                )
+            except Exception as e:
+                return self._json(500, {"ok": False, "error": str(e)})
+        if path == "/health":
+            return self._json(
+                200,
+                {
+                    "ok": True,
+                    "botState": STATE_PATH.is_file(),
+                    "endpoints": [
+                        "/api/bot/state",
+                        "/api/bot/patch",
+                        "/api/bot/action",
+                        "/api/panic",
+                        "/api/customers",
+                    ],
+                },
+            )
+        self._json(404, {"error": "not found"})
+
+    def do_PATCH(self):
+        return self._handle_bot_write()
+
+    def do_PUT(self):
+        return self._handle_bot_write(replace_default=True)
+
+    def _handle_bot_write(self, replace_default: bool = False):
+        path = urlparse(self.path).path
+        body = self._read_body()
+        try:
+            if path in ("/api/bot/state", "/api/bot/patch"):
+                replace = bool(body.get("replace")) if isinstance(body, dict) else False
+                if replace_default and "replace" not in body:
+                    replace = True
+                patch = body.get("patch") if isinstance(body.get("patch"), dict) else body
+                if isinstance(patch, dict):
+                    patch = {k: v for k, v in patch.items() if k not in ("replace", "patch", "ok")}
+                state = apply_bot_patch(patch, replace=replace)
+                return self._json(200, {"ok": True, "state": redact_bot_state(state)})
+            self._json(404, {"error": "not found"})
+        except Exception as e:
+            self._json(400, {"ok": False, "error": str(e)})
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        body = self._read_body()
 
         try:
+            if path in ("/api/bot/state", "/api/bot/patch"):
+                replace = bool(body.get("replace"))
+                patch = body.get("patch") if isinstance(body.get("patch"), dict) else body
+                if isinstance(patch, dict):
+                    patch = {k: v for k, v in patch.items() if k not in ("replace", "patch", "ok")}
+                state = apply_bot_patch(patch, replace=replace)
+                return self._json(200, {"ok": True, "state": redact_bot_state(state)})
+            if path == "/api/bot/action":
+                return self._json(200, bot_action(body.get("action") or "", body))
             if path == "/api/panic":
                 target = (body.get("target") or "local").strip()
                 if target != "local":
@@ -471,6 +786,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/zip")
                 self.send_header("Content-Disposition", f'attachment; filename="{zpath.name}"')
                 self.send_header("Content-Length", str(len(data)))
+                self._cors()
                 self.end_headers()
                 self.wfile.write(data)
                 return
@@ -483,7 +799,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     get_secret()
-    print(f"Ototext Satış Paneli → http://127.0.0.1:{PORT}")
+    print(f"Ototext Admin / Satış → http://127.0.0.1:{PORT}")
+    print(f"Bot state API: /api/bot/state  |  panel: /  veya /admin")
     print(f"Secret dosyası: {SECRET_PATH}")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
