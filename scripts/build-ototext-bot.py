@@ -45,6 +45,7 @@ function defaultState() {
     invites: [],
     logGroupId: '',
     pending: null,
+    healthWatch: { byInstance: {}, lastCheckAt: 0 },
     guard: {
       enabled: false,
       groups: {},
@@ -81,6 +82,8 @@ function ensureState() {
   s.prefixes = [...new Set(s.prefixes)];
   s.logGroupId = s.logGroupId || '';
   s.pending = s.pending || null;
+  s.healthWatch = Object.assign({ byInstance: {}, lastCheckAt: 0 }, s.healthWatch || {});
+  if (!s.healthWatch.byInstance || typeof s.healthWatch.byInstance !== 'object') s.healthWatch.byInstance = {};
   s.daily = Object.assign({ dayKey: '', broadcastSent: 0, dmSent: 0, errors: 0, starts: 0, stops: 0, events: [] }, s.daily || {});
   s.broadcast.windowStart = s.broadcast.windowStart || '';
   s.broadcast.windowEnd = s.broadcast.windowEnd || '';
@@ -377,6 +380,155 @@ async function pushLog(state, type, message) {
   }
 }
 
+function ensureHealthWatch(state) {
+  if (!state.healthWatch || typeof state.healthWatch !== 'object') {
+    state.healthWatch = { byInstance: {}, lastCheckAt: 0 };
+  }
+  if (!state.healthWatch.byInstance || typeof state.healthWatch.byInstance !== 'object') {
+    state.healthWatch.byInstance = {};
+  }
+  return state.healthWatch;
+}
+
+function riskInfoFromState(stateInstance) {
+  const s = String(stateInstance || '').toLowerCase();
+  if (s === 'blocked') {
+    return {
+      key: 'blocked',
+      title: 'HESAP / CİHAZ BAN',
+      explain: 'WhatsApp bu numarayı veya bağlı cihazı engellemiş (blocked). Mesajlar gitmeyebilir. WhatsApp uygulamasından engeli kontrol et; gerekirse Green API logout + QR ile yeniden bağlan.',
+    };
+  }
+  if (s === 'suspended' || s === 'yellowcard') {
+    return {
+      key: s === 'yellowcard' ? 'yellowCard' : 'suspended',
+      title: 'GEÇİCİ KISITLAMA (SPAM)',
+      explain: 'WhatsApp geçici kısıtlama uygulamış (suspended/yellowCard). Gönderimler kuyrukta kalabilir. Hızı düşür, aynı metni tekrar etme; Green API instance reboot dene.',
+    };
+  }
+  if (s === 'notauthorized') {
+    return {
+      key: 'notAuthorized',
+      title: 'OTURUM DÜŞTÜ',
+      explain: 'Instance yetkisiz (notAuthorized). QR yeniden okutulmalı. Mesajlar teslim olmayabilir (kuyrukta bekleyebilir).',
+    };
+  }
+  if (s === 'sleepmode') {
+    return {
+      key: 'sleepMode',
+      title: 'UYKU MODU / TELEFON KAPALI',
+      explain: 'Instance sleepMode: telefon kapalı veya bağlantı bayat. Telefonu aç; birkaç dakika içinde authorized olmalı.',
+    };
+  }
+  return null;
+}
+
+function riskInfoFromError(err) {
+  const raw = String((err && (err.message || err)) || '');
+  const msg = raw.toLowerCase();
+  if (!msg) return null;
+  if (msg.includes('blocked') || /\bban(ned)?\b/.test(msg)) {
+    return {
+      key: 'err-blocked',
+      title: 'API BAN / ENGEL SİNYALİ',
+      explain: `Gönderim/API hatası ban-engel sinyali verdi:\n${raw.slice(0, 220)}`,
+    };
+  }
+  if (msg.includes('not authorized') || msg.includes('notauthorized') || msg.includes('instance is starting or not authorized')) {
+    return {
+      key: 'err-notauth',
+      title: 'API YETKİ HATASI',
+      explain: `Instance yetkisiz görünüyor:\n${raw.slice(0, 220)}`,
+    };
+  }
+  if (msg.includes('yellowcard') || msg.includes('suspended') || msg.includes('spam activity')) {
+    return {
+      key: 'err-restrict',
+      title: 'API KISITLAMA SİNYALİ',
+      explain: `Kısıtlama/spam sinyali:\n${raw.slice(0, 220)}`,
+    };
+  }
+  return null;
+}
+
+async function pushRiskAlert(state, { risk, numLabel, instanceId, source }) {
+  // Bilerek botu DURDURMAZ — sadece log kanalına uyarı.
+  const hw = ensureHealthWatch(state);
+  const iid = String(instanceId || '');
+  const slot = hw.byInstance[iid] || { state: '', lastAlertAt: 0, lastAlertKey: '' };
+  const cooldownMs = 30 * 60 * 1000;
+  if (slot.lastAlertKey === risk.key && (Date.now() - (slot.lastAlertAt || 0)) < cooldownMs) {
+    hw.byInstance[iid] = slot;
+    return false;
+  }
+  slot.lastAlertKey = risk.key;
+  slot.lastAlertAt = Date.now();
+  if (risk.key && !String(risk.key).startsWith('err-')) slot.state = risk.key;
+  hw.byInstance[iid] = slot;
+
+  const bang = '❗❗❗❗❗❗❗❗❗❗';
+  const message = [
+    bang,
+    bang,
+    `🚨 *${risk.title}*`,
+    bang,
+    '',
+    `Kaynak: ${source}`,
+    `Numara: ${numLabel || '-'}`,
+    `Instance: ${iid || '-'}`,
+    '',
+    risk.explain,
+    '',
+    '⚠️ Bot *DURDURULMADI* — yayın/DM/mining çalışmaya devam eder.',
+    `İstersen elle durdur: ${(state.mainPrefix || '!')}panic`,
+    bang,
+  ].join('\n');
+
+  const daily = ensureDaily(state);
+  daily.events.unshift({ t: Date.now(), type: 'alert', message: `${risk.title}: ${risk.explain}`.slice(0, 300) });
+  daily.events = daily.events.slice(0, 200);
+  daily.errors = (daily.errors || 0) + 1;
+
+  if (state.logGroupId) {
+    const prev = { ...CURRENT_CREDS };
+    const candidates = [];
+    const active = getActiveNumber(state);
+    if (active) candidates.push(active);
+    for (const n of state.numbers || []) {
+      if (!candidates.some((c) => String(c.instanceId) === String(n.instanceId))) candidates.push(n);
+    }
+    if (!candidates.length) candidates.push({ instanceId: prev.instanceId, apiToken: prev.apiToken });
+    for (const n of candidates) {
+      try {
+        setCredsFromNumber(n);
+        await api.call(this, 'POST', 'sendMessage', { chatId: state.logGroupId, message });
+        break;
+      } catch (e) {}
+    }
+    CURRENT_CREDS = prev;
+  }
+  return true;
+}
+
+async function handleInstanceStateAlert(state, stateInstance, num, source) {
+  const hw = ensureHealthWatch(state);
+  const iid = String(num?.instanceId || CURRENT_CREDS.instanceId || '');
+  const slot = hw.byInstance[iid] || { state: '', lastAlertAt: 0, lastAlertKey: '' };
+  slot.state = String(stateInstance || '');
+  hw.byInstance[iid] = slot;
+  const risk = riskInfoFromState(stateInstance);
+  if (!risk) return false;
+  const label = num
+    ? `${num.name || 'numara'}${num.wid ? ' · ' + num.wid : ''}`
+    : (state.botWid || '');
+  return pushRiskAlert.call(this, state, {
+    risk,
+    numLabel: label,
+    instanceId: iid,
+    source: source || 'stateInstance',
+  });
+}
+
 function setPending(state, pending) {
   const ttl = pending && pending.ttlMs ? pending.ttlMs : 15 * 60 * 1000;
   const copy = Object.assign({}, pending);
@@ -550,6 +702,20 @@ else {
 }
 await ensureBotAdmin.call(this, state, body.instanceData?.wid, sessionNumber);
 
+// Ban / kısıtlama erken uyarı (botu DURDURMAZ — sadece log grubuna)
+if (body.typeWebhook === 'stateInstanceChanged') {
+  const st = body.stateInstance || body.statusInstance || '';
+  await handleInstanceStateAlert.call(
+    this,
+    state,
+    st,
+    sessionNumber,
+    'webhook stateInstanceChanged'
+  );
+  saveState(state);
+  return [];
+}
+
 // Guard: grup araması / gelen arama
 if (body.typeWebhook === 'incomingCall') {
   const guardReply = await handleGuardCall.call(this, state, body);
@@ -720,7 +886,7 @@ try {
         `${prefix}metin (yazı) — beklenen metni gir`,
         `${prefix}dm (metin). (grupId) — DM (onay ister)`,
         `${prefix}dm-durdur / ${prefix}dm-sure / ${prefix}dm-durum`,
-        `${prefix}log-grup (id) — log grubu`,
+        `${prefix}log-grup (id) — log grubu (ban/kısıtlama uyarısı buraya; bot durmaz)`,
         `${prefix}rapor — günlük rapor`,
         `${prefix}gruplar [sayfa]`,
         `${prefix}davetler / ${prefix}filtre / ${prefix}black / ${prefix}mining`,
@@ -1865,15 +2031,228 @@ async function pushLog(state, type, message) {
   }
 }
 
+function ensureHealthWatch(state) {
+  if (!state.healthWatch || typeof state.healthWatch !== 'object') {
+    state.healthWatch = { byInstance: {}, lastCheckAt: 0 };
+  }
+  if (!state.healthWatch.byInstance || typeof state.healthWatch.byInstance !== 'object') {
+    state.healthWatch.byInstance = {};
+  }
+  return state.healthWatch;
+}
+
+function riskInfoFromState(stateInstance) {
+  const s = String(stateInstance || '').toLowerCase();
+  if (s === 'blocked') {
+    return {
+      key: 'blocked',
+      title: 'HESAP / CİHAZ BAN',
+      explain: 'WhatsApp bu numarayı veya bağlı cihazı engellemiş (blocked). Mesajlar gitmeyebilir. WhatsApp uygulamasından engeli kontrol et; gerekirse Green API logout + QR ile yeniden bağlan.',
+    };
+  }
+  if (s === 'suspended' || s === 'yellowcard') {
+    return {
+      key: s === 'yellowcard' ? 'yellowCard' : 'suspended',
+      title: 'GEÇİCİ KISITLAMA (SPAM)',
+      explain: 'WhatsApp geçici kısıtlama uygulamış (suspended/yellowCard). Gönderimler kuyrukta kalabilir. Hızı düşür, aynı metni tekrar etme; Green API instance reboot dene.',
+    };
+  }
+  if (s === 'notauthorized') {
+    return {
+      key: 'notAuthorized',
+      title: 'OTURUM DÜŞTÜ',
+      explain: 'Instance yetkisiz (notAuthorized). QR yeniden okutulmalı. Mesajlar teslim olmayabilir (kuyrukta bekleyebilir).',
+    };
+  }
+  if (s === 'sleepmode') {
+    return {
+      key: 'sleepMode',
+      title: 'UYKU MODU / TELEFON KAPALI',
+      explain: 'Instance sleepMode: telefon kapalı veya bağlantı bayat. Telefonu aç; birkaç dakika içinde authorized olmalı.',
+    };
+  }
+  return null;
+}
+
+function riskInfoFromError(err) {
+  const raw = String((err && (err.message || err)) || '');
+  const msg = raw.toLowerCase();
+  if (!msg) return null;
+  if (msg.includes('blocked') || /\bban(ned)?\b/.test(msg)) {
+    return {
+      key: 'err-blocked',
+      title: 'API BAN / ENGEL SİNYALİ',
+      explain: `Gönderim/API hatası ban-engel sinyali verdi:\n${raw.slice(0, 220)}`,
+    };
+  }
+  if (msg.includes('not authorized') || msg.includes('notauthorized') || msg.includes('instance is starting or not authorized')) {
+    return {
+      key: 'err-notauth',
+      title: 'API YETKİ HATASI',
+      explain: `Instance yetkisiz görünüyor:\n${raw.slice(0, 220)}`,
+    };
+  }
+  if (msg.includes('yellowcard') || msg.includes('suspended') || msg.includes('spam activity')) {
+    return {
+      key: 'err-restrict',
+      title: 'API KISITLAMA SİNYALİ',
+      explain: `Kısıtlama/spam sinyali:\n${raw.slice(0, 220)}`,
+    };
+  }
+  return null;
+}
+
+async function apiFor(method, endpoint, body, num) {
+  const instance = num ? num.instanceId : null;
+  const token = num ? num.apiToken : null;
+  if (!instance || !token || instance === 'YOUR_INSTANCE_ID') throw new Error('missing credentials');
+  let url = `https://api.green-api.com/waInstance${instance}/${endpoint}/${token}`;
+  if (method === 'GET' && body && typeof body === 'object') {
+    const qs = new URLSearchParams(body).toString();
+    if (qs) url += `?${qs}`;
+    body = undefined;
+  }
+  const opts = { method, url, json: true };
+  if (body !== undefined) opts.body = body;
+  return this.helpers.httpRequest(opts);
+}
+
+async function pushRiskAlert(state, { risk, numLabel, instanceId, source }) {
+  // Bilerek botu DURDURMAZ — sadece log kanalına uyarı.
+  const hw = ensureHealthWatch(state);
+  const iid = String(instanceId || '');
+  const slot = hw.byInstance[iid] || { state: '', lastAlertAt: 0, lastAlertKey: '' };
+  const cooldownMs = 30 * 60 * 1000;
+  if (slot.lastAlertKey === risk.key && (Date.now() - (slot.lastAlertAt || 0)) < cooldownMs) {
+    hw.byInstance[iid] = slot;
+    return false;
+  }
+  slot.lastAlertKey = risk.key;
+  slot.lastAlertAt = Date.now();
+  if (risk.key && !String(risk.key).startsWith('err-')) slot.state = risk.key;
+  hw.byInstance[iid] = slot;
+
+  const bang = '❗❗❗❗❗❗❗❗❗❗';
+  const message = [
+    bang,
+    bang,
+    `🚨 *${risk.title}*`,
+    bang,
+    '',
+    `Kaynak: ${source}`,
+    `Numara: ${numLabel || '-'}`,
+    `Instance: ${iid || '-'}`,
+    '',
+    risk.explain,
+    '',
+    '⚠️ Bot *DURDURULMADI* — yayın/DM/mining çalışmaya devam eder.',
+    'İstersen elle durdur: !panic',
+    bang,
+  ].join('\n');
+
+  const daily = ensureDaily(state);
+  daily.events.unshift({ t: Date.now(), type: 'alert', message: `${risk.title}: ${risk.explain}`.slice(0, 300) });
+  daily.events = daily.events.slice(0, 200);
+  daily.errors = (daily.errors || 0) + 1;
+
+  if (state.logGroupId) {
+    const candidates = [];
+    const active = getActiveNumber(state);
+    if (active) candidates.push(active);
+    for (const n of state.numbers || []) {
+      if (!candidates.some((c) => String(c.instanceId) === String(n.instanceId))) candidates.push(n);
+    }
+    if (!candidates.length) {
+      const envId = String($env.ID_INSTANCE || '');
+      const envTok = String($env.API_TOKEN || '');
+      if (envId && envTok) candidates.push({ instanceId: envId, apiToken: envTok, name: 'env' });
+    }
+    for (const n of candidates) {
+      try {
+        await apiFor.call(this, 'POST', 'sendMessage', { chatId: state.logGroupId, message }, n);
+        break;
+      } catch (e) {}
+    }
+  }
+  return true;
+}
+
+async function handleInstanceStateAlert(state, stateInstance, num, source) {
+  const hw = ensureHealthWatch(state);
+  const iid = String(num?.instanceId || '');
+  const slot = hw.byInstance[iid] || { state: '', lastAlertAt: 0, lastAlertKey: '' };
+  slot.state = String(stateInstance || '');
+  hw.byInstance[iid] = slot;
+  const risk = riskInfoFromState(stateInstance);
+  if (!risk) return false;
+  const label = num
+    ? `${num.name || 'numara'}${num.wid ? ' · ' + num.wid : ''}`
+    : '';
+  return pushRiskAlert.call(this, state, {
+    risk,
+    numLabel: label,
+    instanceId: iid,
+    source: source || 'getStateInstance',
+  });
+}
+
+async function maybeAlertFromError(state, err, source) {
+  const risk = riskInfoFromError(err);
+  if (!risk) return false;
+  const active = getActiveNumber(state);
+  return pushRiskAlert.call(this, state, {
+    risk,
+    numLabel: active ? `${active.name || 'numara'}${active.wid ? ' · ' + active.wid : ''}` : '',
+    instanceId: active ? active.instanceId : '',
+    source: source || 'api-error',
+  });
+}
+
+async function checkInstanceHealth(state) {
+  const hw = ensureHealthWatch(state);
+  hw.lastCheckAt = Date.now();
+  const nums = Array.isArray(state.numbers) && state.numbers.length
+    ? state.numbers
+    : [getActiveNumber(state)].filter(Boolean);
+  for (const num of nums) {
+    if (!num || !num.instanceId || !num.apiToken) continue;
+    try {
+      const st = await apiFor.call(this, 'GET', 'getStateInstance', undefined, num);
+      const flagged = await handleInstanceStateAlert.call(
+        this,
+        state,
+        st.stateInstance,
+        num,
+        'worker getStateInstance'
+      );
+      if (flagged) logs.push(`health ALERT ${num.name || num.instanceId}: ${st.stateInstance}`);
+      else logs.push(`health ${num.name || num.instanceId}: ${st.stateInstance || '?'}`);
+    } catch (e) {
+      logs.push(`health check fail ${num.instanceId}: ${e.message || e}`);
+      await maybeAlertFromError.call(this, state, e, 'worker getStateInstance error');
+    }
+  }
+}
+
 const state = loadState();
 if (!state) return [];
 stateRef = state;
 if (!Array.isArray(state.numbers)) state.numbers = [];
+if (!state.healthWatch || typeof state.healthWatch !== 'object') {
+  state.healthWatch = { byInstance: {}, lastCheckAt: 0 };
+}
 const logs = [];
 const now = Date.now();
 ensureDaily(state);
 const activeNum = getActiveNumber(state);
 if (activeNum) logs.push(`activeNumber=${activeNum.name || activeNum.instanceId}`);
+
+// Ban/kısıtlama erken uyarı — botu durdurmaz
+try {
+  await checkInstanceHealth.call(this, state);
+} catch (e) {
+  logs.push(`healthWatch error: ${e.message || e}`);
+}
 
 // --- Broadcast worker ---
 const bTexts = Array.isArray(state.broadcast?.texts) && state.broadcast.texts.length
@@ -1935,6 +2314,7 @@ if (state.broadcast?.running && bTexts.length) {
       logs.push(`broadcast error: ${e.message || e}`);
       state.broadcast.lastSendAt = now;
       await pushLog.call(this, state, 'error', `broadcast: ${e.message || e}`);
+      await maybeAlertFromError.call(this, state, e, 'broadcast sendMessage');
     }
   }
   } // time window
@@ -1962,6 +2342,7 @@ if (state.dm?.running && Array.isArray(state.dm.queue) && state.dm.queue.length)
         state.dm.failed += 1;
         logs.push(`dm fail ${target}: ${e.message || e}`);
         await pushLog.call(this, state, 'error', `dm fail ${target}: ${e.message || e}`);
+        await maybeAlertFromError.call(this, state, e, `dm sendMessage ${target}`);
       }
       state.dm.index += 1;
       state.dm.lastSendAt = now;

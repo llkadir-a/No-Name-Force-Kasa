@@ -45,6 +45,8 @@ WhatsApp bot — `!` prefix komutlarla yönetilir. Bot numarası otomatik admind
 | `!guard yaz` / `!guard kilit` | Sohbeti aç / sadece admin yazabilir |
 | `!sil N` | Grupta diğer üyelerin son N mesajını sil (grup admin + bot admin) |
 
+Ban/kısıtlama erken uyarı: `blocked` / `suspended` / `yellowCard` / `notAuthorized` / `sleepMode` algılanınca bot **durmaz**; `!log-grup` kanalına kırmızı ❗ uyarısı düşer (aynı uyarı 30 dk’da bir kez).
+
 Sadece adminler kullanabilir. Bot’un kendi numarası otomatik admin.
 
 ## Satış (müşteri kopyası)
