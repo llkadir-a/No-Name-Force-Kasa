@@ -87,7 +87,15 @@ function ensureState() {
   s.daily = Object.assign({ dayKey: '', broadcastSent: 0, dmSent: 0, errors: 0, starts: 0, stops: 0, events: [] }, s.daily || {});
   s.broadcast.windowStart = s.broadcast.windowStart || '';
   s.broadcast.windowEnd = s.broadcast.windowEnd || '';
-  s.broadcast.texts = Array.isArray(s.broadcast.texts) ? s.broadcast.texts.filter((t) => String(t || '').trim()) : [];
+  s.broadcast.texts = Array.isArray(s.broadcast.texts)
+    ? s.broadcast.texts.filter((t) => {
+        if (typeof t === 'string') return !!String(t).trim();
+        if (t && typeof t === 'object') {
+          return !!(String(t.text || '').trim() || String(t.imageUrl || t.url || '').trim());
+        }
+        return false;
+      })
+    : [];
   s.broadcast.textIndex = Number(s.broadcast.textIndex) || 0;
   if (!s.broadcast.texts.length && s.broadcast.text) s.broadcast.texts = [s.broadcast.text];
   s.dm.windowStart = s.dm.windowStart || '';
@@ -536,16 +544,155 @@ function setPending(state, pending) {
   state.pending = Object.assign({ expiresAt: Date.now() + ttl }, copy);
 }
 
+function fileNameFromUrl(url) {
+  try {
+    const u = new URL(String(url));
+    const base = (u.pathname.split('/').pop() || '').split('?')[0];
+    if (base && /\.[a-z0-9]{2,5}$/i.test(base)) return decodeURIComponent(base);
+  } catch (e) {}
+  return 'image.jpg';
+}
+
+function normalizeBroadcastItem(t) {
+  if (t && typeof t === 'object') {
+    const imageUrl = String(t.imageUrl || t.url || '').trim();
+    const text = String(t.text || t.caption || '').trim();
+    return {
+      text,
+      imageUrl,
+      fileName: String(t.fileName || '').trim() || (imageUrl ? fileNameFromUrl(imageUrl) : ''),
+    };
+  }
+  return { text: String(t || '').trim(), imageUrl: '', fileName: '' };
+}
+
+function parseMetinPayload(args) {
+  const s = String(args || '').trim();
+  if (!s) return null;
+  // !metin yazı | https://...jpg   veya  !metin yazı || https://...
+  const m = s.match(/^(.*?)\s*\|\|?\s*(https?:\/\/\S+)\s*$/i);
+  if (m) {
+    return normalizeBroadcastItem({ text: m[1].trim(), imageUrl: m[2].trim() });
+  }
+  if (/^https?:\/\/\S+/i.test(s) && /\.(jpg|jpeg|png|webp|gif|mp4|pdf)(\?\S*)?$/i.test(s)) {
+    return normalizeBroadcastItem({ text: '', imageUrl: s });
+  }
+  return normalizeBroadcastItem({ text: s });
+}
+
+function itemHasContent(it) {
+  const n = normalizeBroadcastItem(it);
+  return !!(n.text || n.imageUrl);
+}
+
+function itemPreview(it, max = 80) {
+  const n = normalizeBroadcastItem(it);
+  const base = n.text ? n.text.slice(0, max) : '(sadece görsel)';
+  return n.imageUrl ? `${base} 🖼` : base;
+}
+
 function broadcastTextsFromData(d) {
   if (Array.isArray(d?.texts) && d.texts.length) {
-    return d.texts.map((t) => String(t || '').trim()).filter(Boolean);
+    return d.texts.map(normalizeBroadcastItem).filter(itemHasContent);
   }
-  const one = String(d?.text || '').trim();
-  return one ? [one] : [];
+  if (d && (d.text || d.imageUrl)) {
+    const one = normalizeBroadcastItem(d);
+    return itemHasContent(one) ? [one] : [];
+  }
+  return [];
 }
 
 function summarizeTexts(texts) {
-  return texts.map((t, i) => `${i + 1}. ${String(t).slice(0, 80)}`).join('\n');
+  return texts.map((t, i) => `${i + 1}. ${itemPreview(t, 70)}`).join('\n');
+}
+
+function extractIncomingMedia(md) {
+  const t = String(md?.typeMessage || '');
+  let data = null;
+  if (t === 'imageMessage') data = md.imageMessageData;
+  else if (t === 'videoMessage') data = md.videoMessageData;
+  else if (t === 'documentMessage') data = md.documentMessageData;
+  if (!data || typeof data !== 'object') return null;
+  const imageUrl = String(data.downloadUrl || data.urlFile || '').trim();
+  if (!imageUrl) return null;
+  return normalizeBroadcastItem({
+    text: String(data.caption || '').trim(),
+    imageUrl,
+    fileName: String(data.fileName || '').trim() || fileNameFromUrl(imageUrl),
+  });
+}
+
+function acceptOtoxBroadcastItem(state, sender, chatId, item, prefix) {
+  const p = state.pending;
+  if (!p) return 'Bekleyen otox adımı yok.';
+  const it = normalizeBroadcastItem(item);
+  if (!itemHasContent(it)) return 'Boş içerik.';
+  if (p.type === 'await_otox_rotate_text') {
+    const d = p.data || {};
+    const count = Number(d.count) || 0;
+    const texts = Array.isArray(d.texts) ? d.texts.slice() : [];
+    texts.push(it);
+    if (texts.length < count) {
+      setPending(state, {
+        type: 'await_otox_rotate_text',
+        by: sender,
+        chatId,
+        data: { ...d, texts, next: texts.length + 1 },
+        ttlMs: 20 * 60 * 1000,
+      });
+      return [
+        `✅ ${texts.length}/${count} alındı${it.imageUrl ? ' (görselli)' : ''}.`,
+        `Şimdi *${texts.length + 1}/${count}* metni gir:`,
+        `${prefix}metin (yazı)`,
+        `veya ${prefix}metin (yazı) | https://görsel.jpg`,
+        'veya WhatsApp’tan görsel + açıklama gönder',
+      ].join('\n');
+    }
+    setPending(state, {
+      type: 'confirm_otox',
+      by: sender,
+      chatId,
+      data: {
+        texts,
+        text: texts[0]?.text || '',
+        imageUrl: texts[0]?.imageUrl || '',
+        windowStart: d.windowStart || '',
+        windowEnd: d.windowEnd || '',
+      },
+    });
+    return [
+      '❓ *Rotasyon — yayın onayı*',
+      `Metin sayısı: ${texts.length}`,
+      summarizeTexts(texts),
+      `Aralık: ${state.broadcast.intervalMin} dk`,
+      '',
+      `Onayla: ${prefix}onay`,
+      `İptal: ${prefix}iptal`,
+    ].join('\n');
+  }
+  if (p.type === 'await_otox_text') {
+    setPending(state, {
+      type: 'confirm_otox',
+      by: sender,
+      chatId,
+      data: {
+        text: it.text,
+        imageUrl: it.imageUrl,
+        fileName: it.fileName,
+        texts: [it],
+        windowStart: p.data?.windowStart || '',
+        windowEnd: p.data?.windowEnd || '',
+      },
+    });
+    return [
+      '❓ OTOX içeriği alındı.',
+      itemPreview(it, 160),
+      it.imageUrl ? `Görsel: ${it.imageUrl.slice(0, 80)}` : null,
+      `Pencere: ${p.data?.windowStart || '-'}-${p.data?.windowEnd || '-'}`,
+      `${prefix}onay / ${prefix}iptal`,
+    ].filter(Boolean).join('\n');
+  }
+  return 'Şu an otox metin/görsel beklenmiyor. Önce !otox yaz.';
 }
 
 function clearPending(state) { state.pending = null; }
@@ -811,10 +958,33 @@ if (body.typeWebhook && body.typeWebhook !== 'incomingMessageReceived') {
 }
 
 const md = body.messageData || {};
+const chatId0 = body.senderData?.chatId || '';
+const sender0 = body.senderData?.sender || chatId0;
 let text = '';
 if (md.typeMessage === 'textMessage') text = md.textMessageData?.textMessage || '';
 else if (md.typeMessage === 'extendedTextMessage') text = md.extendedTextMessageData?.text || '';
 else {
+  // Otox beklerken WhatsApp'tan görsel (+caption) gönderilirse al
+  const media = extractIncomingMedia(md);
+  if (
+    media &&
+    pendingValid(state, sender0) &&
+    ['await_otox_text', 'await_otox_rotate_text'].includes(state.pending?.type) &&
+    isAdmin(state, sender0, chatId0)
+  ) {
+    const prefix0 = state.mainPrefix || '!';
+    const replyMedia = acceptOtoxBroadcastItem(state, sender0, chatId0, media, prefix0);
+    state.stats.commands = (state.stats.commands || 0) + 1;
+    saveState(state);
+    return [{
+      json: {
+        chatId: chatId0,
+        reply: replyMedia,
+        instanceId: CURRENT_CREDS.instanceId,
+        apiToken: CURRENT_CREDS.apiToken,
+      },
+    }];
+  }
   saveState(state);
   return [];
 }
@@ -877,13 +1047,14 @@ try {
       reply = [
         '*Ototext — Ana Menü*',
         '',
-        `${prefix}otox — yayın (rotasyon sorulur)`,
+        `${prefix}otox — yayın (rotasyon sorulur; görsel eklenebilir)`,
         `${prefix}onay / ${prefix}iptal / ${prefix}evet / ${prefix}hayir`,
         `${prefix}panic — her şeyi anında durdur`,
         `${prefix}durdur / ${prefix}durum / ${prefix}sure N`,
         `${prefix}zaman-otox 22:00-01:00 — zamanlı yayın`,
         `${prefix}zaman-dm 22:00-01:00 — zamanlı DM`,
-        `${prefix}metin (yazı) — beklenen metni gir`,
+        `${prefix}metin (yazı) — veya ${prefix}metin yazı | https://görsel.jpg`,
+        `${prefix}gorsel (url) — otox metnine görsel ekle`,
         `${prefix}dm (metin). (grupId) — DM (onay ister)`,
         `${prefix}dm-durdur / ${prefix}dm-sure / ${prefix}dm-durum`,
         `${prefix}log-grup (id) — log grubu (ban/kısıtlama uyarısı buraya; bot durmaz)`,
@@ -1271,7 +1442,13 @@ try {
         },
         ttlMs: 20 * 60 * 1000,
       });
-      reply = `✅ ${n} metin isteniyor.\nŞimdi *1/${n}* metni gir:\n${prefix}metin (yazı)`;
+      reply = [
+        `✅ ${n} metin isteniyor.`,
+        `Şimdi *1/${n}* içeriği gir:`,
+        `${prefix}metin (yazı)`,
+        `${prefix}metin (yazı) | https://görsel.jpg`,
+        'veya WhatsApp’tan görsel + açıklama gönder',
+      ].join('\n');
       break;
     }
     case 'panic': {
@@ -1297,16 +1474,19 @@ try {
     }
     case 'durum': {
       const b = state.broadcast;
-      const texts = Array.isArray(b.texts) && b.texts.length ? b.texts : (b.text ? [b.text] : []);
+      const texts = broadcastTextsFromData(b);
+      const cur = texts.length ? texts[(b.textIndex || 0) % texts.length] : null;
+      const imgN = texts.filter((t) => t.imageUrl).length;
       reply = [
         '*📡 Yayın Durumu*',
         `Durum: ${b.running ? 'ÇALIŞIYOR' : 'DURDU'}`,
         `Süre aralığı: ${b.intervalMin} dk`,
         `Gönderilen: ${b.sent}`,
         `Grup index: ${b.index}`,
-        `Rotasyon: ${texts.length > 1 ? (texts.length + ' metin') : 'tek metin'}`,
-        texts.length > 1 ? `Sıradaki metin #: ${((b.textIndex || 0) % texts.length) + 1}` : '',
-        `Metin: ${(texts[(b.textIndex || 0) % Math.max(texts.length, 1)] || b.text || '-').slice(0, 160)}`,
+        `Rotasyon: ${texts.length > 1 ? (texts.length + ' içerik') : 'tek içerik'}`,
+        imgN ? `Görselli: ${imgN}/${texts.length}` : '',
+        texts.length > 1 ? `Sıradaki #: ${((b.textIndex || 0) % texts.length) + 1}` : '',
+        `İçerik: ${cur ? itemPreview(cur, 160) : (b.text || '-')}`,
         `Pencere: ${(b.windowStart && b.windowEnd) ? (b.windowStart + '-' + b.windowEnd) : 'sürekli'}`,
         `Min üye filtresi: ${state.filters.minUye || 0}`,
         `Blacklist: ${state.blacklist.length}`,
@@ -1632,10 +1812,11 @@ try {
       if (p.type === 'confirm_otox') {
         const d = p.data || {};
         const texts = broadcastTextsFromData(d);
-        if (!texts.length) { reply = 'Metin yok. Tekrar !otox ile başla.'; break; }
+        if (!texts.length) { reply = 'Metin/görsel yok. Tekrar !otox ile başla.'; break; }
+        const withImg = texts.filter((t) => t.imageUrl).length;
         state.broadcast.running = true;
         state.broadcast.texts = texts;
-        state.broadcast.text = texts[0];
+        state.broadcast.text = texts[0].text || texts[0].imageUrl || '';
         state.broadcast.textIndex = 0;
         state.broadcast.index = 0;
         state.broadcast.sent = 0;
@@ -1644,13 +1825,14 @@ try {
         state.broadcast.windowStart = d.windowStart || state.broadcast.windowStart || '';
         state.broadcast.windowEnd = d.windowEnd || state.broadcast.windowEnd || '';
         clearPending(state);
-        await pushLog.call(this, state, 'start', `OTOX başladı | metin=${texts.length} | aralık ${state.broadcast.intervalMin}dk | ${texts[0].slice(0,80)}`);
+        await pushLog.call(this, state, 'start', `OTOX başladı | metin=${texts.length} görsel=${withImg} | aralık ${state.broadcast.intervalMin}dk | ${itemPreview(texts[0], 80)}`);
         reply = [
           '▶️ Yayın onaylandı ve başladı.',
-          `Metin sayısı: ${texts.length}${texts.length > 1 ? ' (rotasyon)' : ''}`,
+          `İçerik sayısı: ${texts.length}${texts.length > 1 ? ' (rotasyon)' : ''}`,
+          withImg ? `Görselli: ${withImg}/${texts.length}` : null,
           `Aralık: ${state.broadcast.intervalMin} dk`,
           `Pencere: ${(state.broadcast.windowStart && state.broadcast.windowEnd) ? (state.broadcast.windowStart + '-' + state.broadcast.windowEnd) : 'sürekli'}`,
-        ].join('\n');
+        ].filter((x) => x !== null).join('\n');
       } else if (p.type === 'confirm_dm') {
         const d = p.data || {};
         const data = await api.call(this, 'POST', 'getGroupData', { groupId: d.groupId });
@@ -1680,27 +1862,31 @@ try {
       if (!pendingValid(state, sender)) { reply = '⏳ Bekleyen işlem yok / süresi doldu.'; break; }
       const p = state.pending;
       if (p.type === 'ask_otox_rotate') {
-        const seed = String(p.data?.seedText || '').trim();
-        if (seed) {
+        const seedRaw = String(p.data?.seedText || '').trim();
+        const seedItem = seedRaw ? parseMetinPayload(seedRaw) : null;
+        if (seedItem && itemHasContent(seedItem)) {
           setPending(state, {
             type: 'confirm_otox',
             by: sender,
             chatId,
             data: {
-              text: seed,
-              texts: [seed],
+              text: seedItem.text,
+              imageUrl: seedItem.imageUrl,
+              fileName: seedItem.fileName,
+              texts: [seedItem],
               windowStart: p.data?.windowStart || '',
               windowEnd: p.data?.windowEnd || '',
             },
           });
           reply = [
-            '❓ *Tek metin — yayın onayı*',
-            seed.slice(0, 160),
+            '❓ *Tek içerik — yayın onayı*',
+            itemPreview(seedItem, 160),
+            seedItem.imageUrl ? '🖼 Görsel eklendi' : null,
             `Aralık: ${state.broadcast.intervalMin} dk`,
             '',
             `Onayla: ${prefix}onay`,
             `İptal: ${prefix}iptal`,
-          ].join('\n');
+          ].filter(Boolean).join('\n');
         } else {
           setPending(state, {
             type: 'await_otox_text',
@@ -1712,7 +1898,12 @@ try {
             },
             ttlMs: 15 * 60 * 1000,
           });
-          reply = `Tek metin seçildi.\nŞimdi yaz:\n${prefix}metin (mesajın)`;
+          reply = [
+            'Tek metin seçildi. Şimdi içeriği gir:',
+            `${prefix}metin (mesajın)`,
+            `${prefix}metin (yazı) | https://görsel.jpg`,
+            'veya WhatsApp’tan görsel + açıklama gönder',
+          ].join('\n');
         }
         break;
       }
@@ -1733,7 +1924,14 @@ try {
       state.broadcast.windowStart = w.start;
       state.broadcast.windowEnd = w.end;
       setPending(state, { type: 'await_otox_text', by: sender, chatId, data: { windowStart: w.start, windowEnd: w.end } });
-      reply = `🕒 OTOX zamanı kaydedildi: ${w.start}-${w.end}\nŞimdi metni gir:\n${prefix}metin (yazın)\nSonra ${prefix}onay ile başlar.`;
+      reply = [
+        `🕒 OTOX zamanı kaydedildi: ${w.start}-${w.end}`,
+        'Şimdi içeriği gir:',
+        `${prefix}metin (yazın)`,
+        `${prefix}metin (yazı) | https://görsel.jpg`,
+        'veya WhatsApp’tan görsel gönder',
+        `Sonra ${prefix}onay ile başlar.`,
+      ].join('\n');
       break;
     }
     case 'zaman-dm': {
@@ -1758,58 +1956,20 @@ try {
       break;
     }
     case 'metin': {
-      if (!args) { reply = `Kullanım: ${prefix}metin (yazı)`; break; }
+      if (!args) {
+        reply = [
+          `Kullanım:`,
+          `${prefix}metin (yazı)`,
+          `${prefix}metin (yazı) | https://görsel.jpg`,
+          `${prefix}gorsel https://görsel.jpg`,
+        ].join('\n');
+        break;
+      }
       if (!pendingValid(state, sender)) { reply = 'Bekleyen metin adımı yok. Önce !otox / zaman-otox / zaman-dm.'; break; }
       const p = state.pending;
-      if (p.type === 'await_otox_rotate_text') {
-        const d = p.data || {};
-        const count = Number(d.count) || 0;
-        const texts = Array.isArray(d.texts) ? d.texts.slice() : [];
-        texts.push(args.trim());
-        if (texts.length < count) {
-          setPending(state, {
-            type: 'await_otox_rotate_text',
-            by: sender,
-            chatId,
-            data: { ...d, texts, next: texts.length + 1 },
-            ttlMs: 20 * 60 * 1000,
-          });
-          reply = `✅ ${texts.length}/${count} alındı.\nŞimdi *${texts.length + 1}/${count}* metni gir:\n${prefix}metin (yazı)`;
-        } else {
-          setPending(state, {
-            type: 'confirm_otox',
-            by: sender,
-            chatId,
-            data: {
-              texts,
-              text: texts[0],
-              windowStart: d.windowStart || '',
-              windowEnd: d.windowEnd || '',
-            },
-          });
-          reply = [
-            '❓ *Rotasyon — yayın onayı*',
-            `Metin sayısı: ${texts.length}`,
-            summarizeTexts(texts),
-            `Aralık: ${state.broadcast.intervalMin} dk`,
-            '',
-            `Onayla: ${prefix}onay`,
-            `İptal: ${prefix}iptal`,
-          ].join('\n');
-        }
-      } else if (p.type === 'await_otox_text') {
-        setPending(state, {
-          type: 'confirm_otox',
-          by: sender,
-          chatId,
-          data: {
-            text: args,
-            texts: [args],
-            windowStart: p.data?.windowStart || '',
-            windowEnd: p.data?.windowEnd || '',
-          },
-        });
-        reply = `❓ OTOX metni alındı.\n${args.slice(0,160)}\nPencere: ${p.data?.windowStart || '-'}-${p.data?.windowEnd || '-'}\n${prefix}onay / ${prefix}iptal`;
+      if (p.type === 'await_otox_rotate_text' || p.type === 'await_otox_text') {
+        const item = parseMetinPayload(args);
+        reply = acceptOtoxBroadcastItem(state, sender, chatId, item, prefix);
       } else if (p.type === 'await_dm_text') {
         setPending(state, {
           type: 'confirm_dm',
@@ -1820,6 +1980,58 @@ try {
         reply = `❓ DM metni alındı.\nGrup: ${p.data?.groupId}\n${args.slice(0,160)}\n${prefix}onay / ${prefix}iptal`;
       } else {
         reply = 'Şu an metin beklenmiyor. Önce !otox yaz.';
+      }
+      break;
+    }
+    case 'gorsel':
+    case 'görsel':
+    case 'image': {
+      const url = String(args || '').trim().replace(/[<>]/g, '');
+      if (!/^https?:\/\/\S+/i.test(url)) {
+        reply = `Kullanım: ${prefix}gorsel https://site.com/foto.jpg\nOtox metin adımında görsel ekler (caption için ${prefix}metin yazı | url).`;
+        break;
+      }
+      if (!pendingValid(state, sender)) {
+        reply = `Önce ${prefix}otox ile metin adımına gel, sonra görsel ekle.`;
+        break;
+      }
+      const p = state.pending;
+      if (p.type === 'await_otox_rotate_text' || p.type === 'await_otox_text') {
+        reply = acceptOtoxBroadcastItem(
+          state,
+          sender,
+          chatId,
+          { text: '', imageUrl: url, fileName: fileNameFromUrl(url) },
+          prefix
+        );
+      } else if (p.type === 'confirm_otox') {
+        // Onay öncesi son metne görsel bağla
+        const d = p.data || {};
+        const texts = broadcastTextsFromData(d);
+        if (!texts.length) {
+          texts.push(normalizeBroadcastItem({ text: '', imageUrl: url }));
+        } else {
+          texts[texts.length - 1].imageUrl = url;
+          texts[texts.length - 1].fileName = fileNameFromUrl(url);
+        }
+        setPending(state, {
+          type: 'confirm_otox',
+          by: sender,
+          chatId,
+          data: {
+            ...d,
+            texts,
+            text: texts[0].text,
+            imageUrl: texts[0].imageUrl,
+          },
+        });
+        reply = [
+          '🖼 Görsel son içeriğe eklendi.',
+          summarizeTexts(texts),
+          `${prefix}onay / ${prefix}iptal`,
+        ].join('\n');
+      } else {
+        reply = `Görsel şu an eklenemez. ${prefix}otox akışında metin adımında dene.`;
       }
       break;
     }
@@ -2234,6 +2446,52 @@ async function checkInstanceHealth(state) {
   }
 }
 
+function fileNameFromUrl(url) {
+  try {
+    const u = new URL(String(url));
+    const base = (u.pathname.split('/').pop() || '').split('?')[0];
+    if (base && /\.[a-z0-9]{2,5}$/i.test(base)) return decodeURIComponent(base);
+  } catch (e) {}
+  return 'image.jpg';
+}
+
+function normalizeBroadcastItem(t) {
+  if (t && typeof t === 'object') {
+    const imageUrl = String(t.imageUrl || t.url || '').trim();
+    const text = String(t.text || t.caption || '').trim();
+    return {
+      text,
+      imageUrl,
+      fileName: String(t.fileName || '').trim() || (imageUrl ? fileNameFromUrl(imageUrl) : ''),
+    };
+  }
+  return { text: String(t || '').trim(), imageUrl: '', fileName: '' };
+}
+
+function normalizeBroadcastList(state) {
+  const b = state.broadcast || {};
+  if (Array.isArray(b.texts) && b.texts.length) {
+    return b.texts.map(normalizeBroadcastItem).filter((it) => it.text || it.imageUrl);
+  }
+  if (b.text || b.imageUrl) return [normalizeBroadcastItem(b)];
+  return [];
+}
+
+async function sendBroadcastItem(target, item) {
+  const it = normalizeBroadcastItem(item);
+  if (it.imageUrl) {
+    await api.call(this, 'POST', 'sendFileByUrl', {
+      chatId: target,
+      urlFile: it.imageUrl,
+      fileName: it.fileName || 'image.jpg',
+      caption: it.text || '',
+    });
+    return it;
+  }
+  await api.call(this, 'POST', 'sendMessage', { chatId: target, message: it.text || '' });
+  return it;
+}
+
 const state = loadState();
 if (!state) return [];
 stateRef = state;
@@ -2255,9 +2513,7 @@ try {
 }
 
 // --- Broadcast worker ---
-const bTexts = Array.isArray(state.broadcast?.texts) && state.broadcast.texts.length
-  ? state.broadcast.texts
-  : (state.broadcast?.text ? [state.broadcast.text] : []);
+const bTexts = normalizeBroadcastList(state);
 if (state.broadcast?.running && bTexts.length) {
   if (!inTimeWindow(state.broadcast.windowStart, state.broadcast.windowEnd)) {
     logs.push('broadcast: outside time window');
@@ -2296,16 +2552,17 @@ if (state.broadcast?.running && bTexts.length) {
         }
         const target = list[state.broadcast.index];
         const tIdx = (Number(state.broadcast.textIndex) || 0) % bTexts.length;
-        const message = bTexts[tIdx];
-        await api.call(this, 'POST', 'sendMessage', { chatId: target, message });
-        state.broadcast.text = message;
+        const sentItem = await sendBroadcastItem.call(this, target, bTexts[tIdx]);
+        state.broadcast.texts = bTexts;
+        state.broadcast.text = sentItem.text || sentItem.imageUrl || '';
         state.broadcast.textIndex = (tIdx + 1) % bTexts.length;
         state.broadcast.index += 1;
         state.broadcast.sent += 1;
         state.broadcast.lastSendAt = now;
         state.stats.broadcastSent = (state.stats.broadcastSent || 0) + 1;
-        logs.push(`broadcast -> ${target} text#${tIdx + 1}/${bTexts.length}`);
-        await pushLog.call(this, state, 'broadcast', `grup ${target} | metin ${tIdx + 1}/${bTexts.length} | #${state.broadcast.sent}`);
+        const kind = sentItem.imageUrl ? 'img+caption' : 'text';
+        logs.push(`broadcast -> ${target} #${tIdx + 1}/${bTexts.length} ${kind}`);
+        await pushLog.call(this, state, 'broadcast', `grup ${target} | ${kind} ${tIdx + 1}/${bTexts.length} | #${state.broadcast.sent}`);
       } else {
         logs.push('broadcast: no eligible groups');
         state.broadcast.lastSendAt = now;
@@ -2314,7 +2571,7 @@ if (state.broadcast?.running && bTexts.length) {
       logs.push(`broadcast error: ${e.message || e}`);
       state.broadcast.lastSendAt = now;
       await pushLog.call(this, state, 'error', `broadcast: ${e.message || e}`);
-      await maybeAlertFromError.call(this, state, e, 'broadcast sendMessage');
+      await maybeAlertFromError.call(this, state, e, 'broadcast send');
     }
   }
   } // time window

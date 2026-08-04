@@ -9,9 +9,10 @@ WhatsApp bot — `!` prefix komutlarla yönetilir. Bot numarası otomatik admind
 | Komut | Açıklama |
 |-------|----------|
 | `!yardim` | Ana menü |
-| `!otox` | Yayın: rotasyon sorulur → adet/metin → onay |
+| `!otox` | Yayın: rotasyon sorulur → adet/metin → onay (görsel eklenebilir) |
 | `!adet N` | Rotasyonda kaç metin (2-10) |
-| `!metin ...` | Otox/DM metin adımları |
+| `!metin ...` | Otox/DM metin; otox’ta `yazı \| https://görsel.jpg` |
+| `!gorsel (url)` | Otox içeriğine görsel ekle (veya WhatsApp’tan görsel gönder) |
 | `!onay` / `!evet` / `!hayir` / `!iptal` | Onay / rotasyon cevabı |
 | `!panic` | Her şeyi anında durdur |
 | `!zaman-otox 22:00-01:00` | Zamanlı yayın penceresi |
