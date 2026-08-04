@@ -43,6 +43,7 @@ WhatsApp bot — `!` prefix komutlarla yönetilir. Bot numarası otomatik admind
 | `!guard grup ac` | Sadece bu grupta guard |
 | `!guard sticker 4` | Sticker spam limiti (15 sn içinde) |
 | `!guard yaz` / `!guard kilit` | Sohbeti aç / sadece admin yazabilir |
+| `!sil N` | Grupta diğer üyelerin son N mesajını sil (grup admin + bot admin) |
 
 Sadece adminler kullanabilir. Bot’un kendi numarası otomatik admin.
 

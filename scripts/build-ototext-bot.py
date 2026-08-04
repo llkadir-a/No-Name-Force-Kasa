@@ -728,8 +728,81 @@ try {
         `${prefix}admin / ${prefix}prefix / ${prefix}istatistik`,
         `${prefix}numara — çoklu WhatsApp numarası`,
         `${prefix}guard — grup koruma (sticker spam / arama)`,
+        `${prefix}sil N — diğer üyelerin son N mesajını sil`,
         `${prefix}lisans — lisans durumu`,
       ].join('\n');
+      break;
+    }
+    case 'sil': {
+      if (!String(chatId).endsWith('@g.us')) {
+        reply = 'Bu komut sadece grup sohbetinde çalışır.';
+        break;
+      }
+      const n = parseInt(String(args || '').trim(), 10);
+      if (!Number.isFinite(n) || n < 1 || n > 50) {
+        reply = `Kullanım: ${prefix}sil 10\n1-50 arası. Diğer üyelerin yukarıdaki (son) mesajlarını siler.`;
+        break;
+      }
+      try {
+        const gdata = await api.call(this, 'POST', 'getGroupData', { groupId: chatId });
+        const parts = Array.isArray(gdata.participants) ? gdata.participants : [];
+        const me = normId(state.botWid);
+        const meRow = parts.find((p) => normId(p.id) === me);
+        const botIsAdmin = !!(meRow && (meRow.isAdmin || meRow.isSuperAdmin));
+        if (!botIsAdmin) {
+          reply = 'Bot bu grupta yönetici değil — başkasının mesajını silemez. Önce botu admin yap.';
+          break;
+        }
+        const senderRow = parts.find((p) => normId(p.id) === normId(sender));
+        const senderIsGAdmin = !!(senderRow && (senderRow.isAdmin || senderRow.isSuperAdmin));
+        if (!senderIsGAdmin) {
+          reply = 'Bu komut için grupta yönetici (admin) olmalısın.';
+          break;
+        }
+
+        const fetchCount = Math.min(300, Math.max(40, n * 6));
+        const history = await api.call(this, 'POST', 'getChatHistory', {
+          chatId,
+          count: fetchCount,
+        });
+        const list = Array.isArray(history) ? history : [];
+        const toDelete = [];
+        for (const msg of list) {
+          if (toDelete.length >= n) break;
+          if (!msg || !msg.idMessage) continue;
+          if (msg.isDeleted) continue;
+          if (String(msg.type) !== 'incoming') continue; // sadece diğer üyeler
+          if (String(msg.typeMessage || '') === 'reactionMessage') continue;
+          const sid = normId(msg.senderId);
+          if (!sid || sid === me) continue;
+          toDelete.push(msg.idMessage);
+        }
+        if (!toDelete.length) {
+          reply = 'Silinecek (diğer üye) mesaj bulunamadı. Geçmiş senkronu gecikmeli olabilir.';
+          break;
+        }
+        let ok = 0;
+        let fail = 0;
+        for (const idMessage of toDelete) {
+          try {
+            await api.call(this, 'POST', 'deleteMessage', { chatId, idMessage });
+            ok += 1;
+          } catch (e) {
+            fail += 1;
+          }
+        }
+        await pushLog.call(this, state, 'info', `!sil ${n} @ ${chatId} → ok=${ok} fail=${fail}`);
+        reply = [
+          `🗑 *Mesaj silme*`,
+          `İstenen: ${n}`,
+          `Silinen: ${ok}`,
+          fail ? `Başarısız: ${fail}` : null,
+          '',
+          'Not: WhatsApp ~60 saat kuralı var; eski mesajlar herkesten silinmeyebilir.',
+        ].filter((x) => x !== null).join('\n');
+      } catch (e) {
+        reply = `Silme hatası: ${e.message || e}`;
+      }
       break;
     }
     case 'guard': {

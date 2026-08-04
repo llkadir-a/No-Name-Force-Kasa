@@ -1,8 +1,8 @@
 {
   "name": "Ototext Bot — Worker",
   "active": false,
-  "id": "a2b08be3-e640-4904-996a-7225703a4c03",
-  "versionId": "a44d3f75-cca7-4893-8cbe-ddccdbc39967",
+  "id": "0c30bf4b-dba7-4c03-ae61-1986001348ab",
+  "versionId": "2fe63ca8-7dda-4d97-8e18-80eb54c868f0",
   "nodes": [
     {
       "parameters": {
