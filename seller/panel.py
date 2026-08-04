@@ -6,6 +6,8 @@ import json
 import os
 import shutil
 import tempfile
+import urllib.error
+import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -560,6 +562,140 @@ def apply_bot_patch(patch: dict, *, replace: bool = False) -> dict:
     return current
 
 
+def _load_dotenv_simple() -> dict:
+    env_path = ROOT / ".env"
+    out = {}
+    if not env_path.is_file():
+        return out
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return out
+
+
+def resolve_bot_number(number_id: str = "") -> dict | None:
+    """Aktif (veya seçilen) Green API numarası — state + .env yedek."""
+    state = load_bot_state()
+    nums = state.get("numbers") if isinstance(state.get("numbers"), list) else []
+    picked = None
+    if number_id:
+        for n in nums:
+            if isinstance(n, dict) and (
+                str(n.get("id")) == str(number_id)
+                or str(n.get("instanceId")) == str(number_id)
+            ):
+                picked = n
+                break
+    if not picked:
+        active = str(state.get("activeNumberId") or "")
+        if active:
+            for n in nums:
+                if isinstance(n, dict) and str(n.get("id")) == active:
+                    picked = n
+                    break
+    if not picked and nums:
+        picked = nums[0] if isinstance(nums[0], dict) else None
+    if picked and picked.get("instanceId") and picked.get("apiToken"):
+        return {
+            "id": picked.get("id") or "",
+            "name": picked.get("name") or "numara",
+            "instanceId": str(picked["instanceId"]),
+            "apiToken": str(picked["apiToken"]),
+            "wid": picked.get("wid") or "",
+            "source": "state",
+        }
+    dotenv = _load_dotenv_simple()
+    iid = os.environ.get("ID_INSTANCE") or dotenv.get("ID_INSTANCE") or ""
+    tok = os.environ.get("API_TOKEN") or dotenv.get("API_TOKEN") or ""
+    if iid and tok and iid != "YOUR_INSTANCE_ID" and tok != "YOUR_API_TOKEN_INSTANCE":
+        return {
+            "id": "env",
+            "name": "Ana (.env)",
+            "instanceId": iid,
+            "apiToken": tok,
+            "wid": "",
+            "source": "env",
+        }
+    return None
+
+
+def green_api_get(instance: str, token: str, method: str) -> dict:
+    url = f"https://api.green-api.com/waInstance{instance}/{method}/{token}"
+    try:
+        with urllib.request.urlopen(url, timeout=20) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode()
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {"error": raw or str(e), "http": e.code}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def bot_qr_payload(number_id: str = "") -> dict:
+    """Admin panel QR — Green API /qr + stateInstance."""
+    num = resolve_bot_number(number_id)
+    if not num:
+        return {
+            "ok": False,
+            "error": "Green API credentials yok. Numaralar sekmesinden ekle veya .env ID_INSTANCE/API_TOKEN koy.",
+            "authorized": False,
+        }
+    instance = num["instanceId"]
+    token = num["apiToken"]
+    st = green_api_get(instance, token, "getStateInstance")
+    state = str(st.get("stateInstance") or "")
+    if st.get("error") and not state:
+        return {
+            "ok": False,
+            "error": st.get("error"),
+            "authorized": False,
+            "number": {"id": num["id"], "name": num["name"], "instanceId": instance, "source": num["source"]},
+        }
+    qr_page = f"https://qr.green-api.com/waInstance{instance}/{token}"
+    base = {
+        "ok": True,
+        "state": state or "unknown",
+        "authorized": state == "authorized",
+        "qrPage": qr_page,
+        "number": {
+            "id": num["id"],
+            "name": num["name"],
+            "instanceId": instance,
+            "wid": num.get("wid") or "",
+            "source": num["source"],
+        },
+    }
+    if state == "authorized":
+        base["type"] = "alreadyLogged"
+        base["message"] = "WhatsApp zaten bağlı (authorized)."
+        return base
+
+    qr = green_api_get(instance, token, "qr")
+    qtype = str(qr.get("type") or "")
+    base["type"] = qtype or "error"
+    if qtype == "qrCode" and qr.get("message"):
+        base["qrDataUrl"] = "data:image/png;base64," + str(qr["message"]).strip()
+        base["message"] = "QR hazır — WhatsApp’tan okut (~20 sn’de yenilenir)."
+    elif qtype == "alreadyLogged":
+        base["authorized"] = True
+        base["message"] = "Zaten giriş yapılmış."
+    else:
+        base["message"] = str(qr.get("message") or qr.get("error") or "QR alınamadı")
+        if qr.get("error"):
+            base["ok"] = False
+            base["error"] = base["message"]
+    return base
+
+
 def panic_local_bot() -> dict:
     """Yerel Ototext state — otox/dm/mining/pending durdur. Hesaba girmez."""
     if not STATE_PATH.is_file():
@@ -684,6 +820,13 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except Exception as e:
                 return self._json(500, {"ok": False, "error": str(e)})
+        if path == "/api/bot/qr":
+            qs = parse_qs(urlparse(self.path).query)
+            nid = (qs.get("numberId") or qs.get("id") or [""])[0]
+            try:
+                return self._json(200, bot_qr_payload(nid))
+            except Exception as e:
+                return self._json(500, {"ok": False, "error": str(e)})
         if path == "/health":
             return self._json(
                 200,
@@ -694,6 +837,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/bot/state",
                         "/api/bot/patch",
                         "/api/bot/action",
+                        "/api/bot/qr",
                         "/api/panic",
                         "/api/customers",
                     ],
