@@ -7,8 +7,10 @@ WhatsApp bot — `!` prefix komutlarla yönetilir. Bot numarası otomatik admind
 | Komut | Açıklama |
 |-------|----------|
 | `!yardim` | Ana menü |
-| `!otox (metin)` | Yayın başlat (onay ister) |
-| `!onay` / `!iptal` | Onay sistemi |
+| `!otox` | Yayın: rotasyon sorulur → adet/metin → onay |
+| `!adet N` | Rotasyonda kaç metin (2-10) |
+| `!metin ...` | Otox/DM metin adımları |
+| `!onay` / `!evet` / `!hayir` / `!iptal` | Onay / rotasyon cevabı |
 | `!panic` | Her şeyi anında durdur |
 | `!zaman-otox 22:00-01:00` | Zamanlı yayın penceresi |
 | `!zaman-dm 22:00-01:00` | Zamanlı DM penceresi |

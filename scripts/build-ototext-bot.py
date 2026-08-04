@@ -37,7 +37,7 @@ function defaultState() {
     prefixes: [main],
     numbers: [],
     activeNumberId: '',
-    broadcast: { running: false, text: '', intervalMin: 3, index: 0, sent: 0, lastSendAt: 0, startedAt: 0, cycle: 0, windowStart: '', windowEnd: '' },
+    broadcast: { running: false, text: '', texts: [], textIndex: 0, intervalMin: 3, index: 0, sent: 0, lastSendAt: 0, startedAt: 0, cycle: 0, windowStart: '', windowEnd: '' },
     dm: { running: false, text: '', groupId: '', intervalMin: 3, queue: [], index: 0, sent: 0, failed: 0, lastSendAt: 0, startedAt: 0, windowStart: '', windowEnd: '' },
     mining: { running: false, targetGroupId: '', targetName: '', members: 0, addedToday: 0, pending: 0, totalTarget: 0, durationMin: 0, startedAt: 0, lastAddAt: 0, dayKey: '' },
     filters: { minUye: 0 },
@@ -84,6 +84,9 @@ function ensureState() {
   s.daily = Object.assign({ dayKey: '', broadcastSent: 0, dmSent: 0, errors: 0, starts: 0, stops: 0, events: [] }, s.daily || {});
   s.broadcast.windowStart = s.broadcast.windowStart || '';
   s.broadcast.windowEnd = s.broadcast.windowEnd || '';
+  s.broadcast.texts = Array.isArray(s.broadcast.texts) ? s.broadcast.texts.filter((t) => String(t || '').trim()) : [];
+  s.broadcast.textIndex = Number(s.broadcast.textIndex) || 0;
+  if (!s.broadcast.texts.length && s.broadcast.text) s.broadcast.texts = [s.broadcast.text];
   s.dm.windowStart = s.dm.windowStart || '';
   s.dm.windowEnd = s.dm.windowEnd || '';
   s.numbers = Array.isArray(s.numbers) ? s.numbers : [];
@@ -375,7 +378,22 @@ async function pushLog(state, type, message) {
 }
 
 function setPending(state, pending) {
-  state.pending = Object.assign({ expiresAt: Date.now() + 10 * 60 * 1000 }, pending);
+  const ttl = pending && pending.ttlMs ? pending.ttlMs : 15 * 60 * 1000;
+  const copy = Object.assign({}, pending);
+  delete copy.ttlMs;
+  state.pending = Object.assign({ expiresAt: Date.now() + ttl }, copy);
+}
+
+function broadcastTextsFromData(d) {
+  if (Array.isArray(d?.texts) && d.texts.length) {
+    return d.texts.map((t) => String(t || '').trim()).filter(Boolean);
+  }
+  const one = String(d?.text || '').trim();
+  return one ? [one] : [];
+}
+
+function summarizeTexts(texts) {
+  return texts.map((t, i) => `${i + 1}. ${String(t).slice(0, 80)}`).join('\n');
 }
 
 function clearPending(state) { state.pending = null; }
@@ -693,8 +711,8 @@ try {
       reply = [
         '*Ototext — Ana Menü*',
         '',
-        `${prefix}otox (metin) — yayın (onay ister)`,
-        `${prefix}onay / ${prefix}iptal — onay sistemi`,
+        `${prefix}otox — yayın (rotasyon sorulur)`,
+        `${prefix}onay / ${prefix}iptal / ${prefix}evet / ${prefix}hayir`,
         `${prefix}panic — her şeyi anında durdur`,
         `${prefix}durdur / ${prefix}durum / ${prefix}sure N`,
         `${prefix}zaman-otox 22:00-01:00 — zamanlı yayın`,
@@ -945,27 +963,76 @@ try {
       break;
     }
     case 'otox': {
-      if (!args) { reply = `Kullanım: ${prefix}otox (metin)`; break; }
+      // Eski kısayol: !otox (metin) → tek metin onayı
+      // Yeni akış: !otox → rotasyon sor
+      if (args && args.trim()) {
+        setPending(state, {
+          type: 'ask_otox_rotate',
+          by: sender,
+          chatId,
+          data: {
+            seedText: args.trim(),
+            windowStart: state.broadcast.windowStart || '',
+            windowEnd: state.broadcast.windowEnd || '',
+          },
+          ttlMs: 15 * 60 * 1000,
+        });
+        reply = [
+          '❓ *Mesaj rotasyonu kullanmak ister misin?*',
+          'Birden fazla metin sırayla gönderilir.',
+          '',
+          `Evet: ${prefix}evet`,
+          `Hayır (tek metin): ${prefix}hayir`,
+          `Vazgeç: ${prefix}iptal`,
+          '',
+          `Not: yazdığın metin saklandı (tek metin seçersen kullanılır).`,
+        ].join('\n');
+        break;
+      }
       setPending(state, {
-        type: 'confirm_otox',
+        type: 'ask_otox_rotate',
         by: sender,
         chatId,
         data: {
-          text: args,
           windowStart: state.broadcast.windowStart || '',
           windowEnd: state.broadcast.windowEnd || '',
         },
+        ttlMs: 15 * 60 * 1000,
       });
-      const w = state.pending.data;
       reply = [
-        '❓ *Yayın onayı*',
-        `Metin: ${args.slice(0, 160)}`,
-        `Aralık: ${state.broadcast.intervalMin} dk`,
-        `Pencere: ${w.windowStart && w.windowEnd ? (w.windowStart + '-' + w.windowEnd) : 'sürekli'}`,
+        '❓ *Mesaj rotasyonu kullanmak ister misin?*',
+        'Rotasyon: her gönderimde sıradaki metin kullanılır.',
         '',
-        `Onayla: ${prefix}onay`,
-        `İptal: ${prefix}iptal`,
+        `Evet: ${prefix}evet`,
+        `Hayır (tek metin): ${prefix}hayir`,
+        `Vazgeç: ${prefix}iptal`,
       ].join('\n');
+      break;
+    }
+    case 'adet': {
+      if (!pendingValid(state, sender) || state.pending.type !== 'ask_otox_count') {
+        reply = `Önce ${prefix}otox yaz, rotasyona evet de, sonra ${prefix}adet 3`;
+        break;
+      }
+      const n = parseInt(String(args || '').trim(), 10);
+      if (!Number.isFinite(n) || n < 2 || n > 10) {
+        reply = `Kaç metin? 2-10 arası.\nÖrnek: ${prefix}adet 3`;
+        break;
+      }
+      const base = state.pending.data || {};
+      setPending(state, {
+        type: 'await_otox_rotate_text',
+        by: sender,
+        chatId,
+        data: {
+          ...base,
+          count: n,
+          texts: [],
+          next: 1,
+        },
+        ttlMs: 20 * 60 * 1000,
+      });
+      reply = `✅ ${n} metin isteniyor.\nŞimdi *1/${n}* metni gir:\n${prefix}metin (yazı)`;
       break;
     }
     case 'panic': {
@@ -991,17 +1058,20 @@ try {
     }
     case 'durum': {
       const b = state.broadcast;
+      const texts = Array.isArray(b.texts) && b.texts.length ? b.texts : (b.text ? [b.text] : []);
       reply = [
         '*📡 Yayın Durumu*',
         `Durum: ${b.running ? 'ÇALIŞIYOR' : 'DURDU'}`,
         `Süre aralığı: ${b.intervalMin} dk`,
         `Gönderilen: ${b.sent}`,
-        `Index: ${b.index}`,
-        `Metin: ${(b.text || '-').slice(0, 160)}`,
+        `Grup index: ${b.index}`,
+        `Rotasyon: ${texts.length > 1 ? (texts.length + ' metin') : 'tek metin'}`,
+        texts.length > 1 ? `Sıradaki metin #: ${((b.textIndex || 0) % texts.length) + 1}` : '',
+        `Metin: ${(texts[(b.textIndex || 0) % Math.max(texts.length, 1)] || b.text || '-').slice(0, 160)}`,
         `Pencere: ${(b.windowStart && b.windowEnd) ? (b.windowStart + '-' + b.windowEnd) : 'sürekli'}`,
         `Min üye filtresi: ${state.filters.minUye || 0}`,
         `Blacklist: ${state.blacklist.length}`,
-      ].join('\n');
+      ].filter(Boolean).join('\n');
       break;
     }
     case 'sure': {
@@ -1303,10 +1373,31 @@ try {
     case 'evet': {
       if (!pendingValid(state, sender)) { reply = '⏳ Onay bekleyen işlem yok / süresi doldu.'; break; }
       const p = state.pending;
+      if (p.type === 'ask_otox_rotate') {
+        // Rotasyon istiyor
+        setPending(state, {
+          type: 'ask_otox_count',
+          by: sender,
+          chatId,
+          data: p.data || {},
+          ttlMs: 15 * 60 * 1000,
+        });
+        reply = [
+          '🔢 Kaç farklı metin kullanılsın?',
+          `Örnek: ${prefix}adet 3`,
+          '(2 ile 10 arası)',
+          `Vazgeç: ${prefix}iptal`,
+        ].join('\n');
+        break;
+      }
       if (p.type === 'confirm_otox') {
         const d = p.data || {};
+        const texts = broadcastTextsFromData(d);
+        if (!texts.length) { reply = 'Metin yok. Tekrar !otox ile başla.'; break; }
         state.broadcast.running = true;
-        state.broadcast.text = d.text || '';
+        state.broadcast.texts = texts;
+        state.broadcast.text = texts[0];
+        state.broadcast.textIndex = 0;
         state.broadcast.index = 0;
         state.broadcast.sent = 0;
         state.broadcast.startedAt = Date.now();
@@ -1314,8 +1405,13 @@ try {
         state.broadcast.windowStart = d.windowStart || state.broadcast.windowStart || '';
         state.broadcast.windowEnd = d.windowEnd || state.broadcast.windowEnd || '';
         clearPending(state);
-        await pushLog.call(this, state, 'start', `OTOX başladı | aralık ${state.broadcast.intervalMin}dk | pencere ${state.broadcast.windowStart || '-'}-${state.broadcast.windowEnd || '-'} | ${String(state.broadcast.text).slice(0,80)}`);
-        reply = `▶️ Yayın onaylandı ve başladı.\nAralık: ${state.broadcast.intervalMin} dk\nPencere: ${(state.broadcast.windowStart && state.broadcast.windowEnd) ? (state.broadcast.windowStart + '-' + state.broadcast.windowEnd) : 'sürekli'}`;
+        await pushLog.call(this, state, 'start', `OTOX başladı | metin=${texts.length} | aralık ${state.broadcast.intervalMin}dk | ${texts[0].slice(0,80)}`);
+        reply = [
+          '▶️ Yayın onaylandı ve başladı.',
+          `Metin sayısı: ${texts.length}${texts.length > 1 ? ' (rotasyon)' : ''}`,
+          `Aralık: ${state.broadcast.intervalMin} dk`,
+          `Pencere: ${(state.broadcast.windowStart && state.broadcast.windowEnd) ? (state.broadcast.windowStart + '-' + state.broadcast.windowEnd) : 'sürekli'}`,
+        ].join('\n');
       } else if (p.type === 'confirm_dm') {
         const d = p.data || {};
         const data = await api.call(this, 'POST', 'getGroupData', { groupId: d.groupId });
@@ -1337,12 +1433,56 @@ try {
         await pushLog.call(this, state, 'start', `DM başladı | grup ${d.groupId} | kuyruk ${queue.length}`);
         reply = `✉️ DM onaylandı.\nGrup: ${data.subject || d.groupId}\nKuyruk: ${queue.length}\nPencere: ${(state.dm.windowStart && state.dm.windowEnd) ? (state.dm.windowStart + '-' + state.dm.windowEnd) : 'sürekli'}`;
       } else {
-        reply = 'Bu işlem onay ile tamamlanamaz. Önce metin gir.';
+        reply = 'Bu adımda !onay/!evet geçerli değil. Akıştaki soruya cevap ver.';
       }
       break;
     }
-    case 'iptal':
     case 'hayir': {
+      if (!pendingValid(state, sender)) { reply = '⏳ Bekleyen işlem yok / süresi doldu.'; break; }
+      const p = state.pending;
+      if (p.type === 'ask_otox_rotate') {
+        const seed = String(p.data?.seedText || '').trim();
+        if (seed) {
+          setPending(state, {
+            type: 'confirm_otox',
+            by: sender,
+            chatId,
+            data: {
+              text: seed,
+              texts: [seed],
+              windowStart: p.data?.windowStart || '',
+              windowEnd: p.data?.windowEnd || '',
+            },
+          });
+          reply = [
+            '❓ *Tek metin — yayın onayı*',
+            seed.slice(0, 160),
+            `Aralık: ${state.broadcast.intervalMin} dk`,
+            '',
+            `Onayla: ${prefix}onay`,
+            `İptal: ${prefix}iptal`,
+          ].join('\n');
+        } else {
+          setPending(state, {
+            type: 'await_otox_text',
+            by: sender,
+            chatId,
+            data: {
+              windowStart: p.data?.windowStart || '',
+              windowEnd: p.data?.windowEnd || '',
+            },
+            ttlMs: 15 * 60 * 1000,
+          });
+          reply = `Tek metin seçildi.\nŞimdi yaz:\n${prefix}metin (mesajın)`;
+        }
+        break;
+      }
+      // diğer durumlarda hayır = iptal
+      clearPending(state);
+      reply = '❎ İşlem iptal edildi.';
+      break;
+    }
+    case 'iptal': {
       if (!state.pending) { reply = 'İptal edilecek işlem yok.'; break; }
       clearPending(state);
       reply = '❎ İşlem iptal edildi.';
@@ -1380,16 +1520,57 @@ try {
     }
     case 'metin': {
       if (!args) { reply = `Kullanım: ${prefix}metin (yazı)`; break; }
-      if (!pendingValid(state, sender)) { reply = 'Bekleyen metin adımı yok. Önce zaman-otox / zaman-dm veya işlem başlat.'; break; }
+      if (!pendingValid(state, sender)) { reply = 'Bekleyen metin adımı yok. Önce !otox / zaman-otox / zaman-dm.'; break; }
       const p = state.pending;
-      if (p.type === 'await_otox_text') {
+      if (p.type === 'await_otox_rotate_text') {
+        const d = p.data || {};
+        const count = Number(d.count) || 0;
+        const texts = Array.isArray(d.texts) ? d.texts.slice() : [];
+        texts.push(args.trim());
+        if (texts.length < count) {
+          setPending(state, {
+            type: 'await_otox_rotate_text',
+            by: sender,
+            chatId,
+            data: { ...d, texts, next: texts.length + 1 },
+            ttlMs: 20 * 60 * 1000,
+          });
+          reply = `✅ ${texts.length}/${count} alındı.\nŞimdi *${texts.length + 1}/${count}* metni gir:\n${prefix}metin (yazı)`;
+        } else {
+          setPending(state, {
+            type: 'confirm_otox',
+            by: sender,
+            chatId,
+            data: {
+              texts,
+              text: texts[0],
+              windowStart: d.windowStart || '',
+              windowEnd: d.windowEnd || '',
+            },
+          });
+          reply = [
+            '❓ *Rotasyon — yayın onayı*',
+            `Metin sayısı: ${texts.length}`,
+            summarizeTexts(texts),
+            `Aralık: ${state.broadcast.intervalMin} dk`,
+            '',
+            `Onayla: ${prefix}onay`,
+            `İptal: ${prefix}iptal`,
+          ].join('\n');
+        }
+      } else if (p.type === 'await_otox_text') {
         setPending(state, {
           type: 'confirm_otox',
           by: sender,
           chatId,
-          data: { text: args, windowStart: p.data?.windowStart || '', windowEnd: p.data?.windowEnd || '' },
+          data: {
+            text: args,
+            texts: [args],
+            windowStart: p.data?.windowStart || '',
+            windowEnd: p.data?.windowEnd || '',
+          },
         });
-        reply = `❓ OTOX metni alındı.\n${args.slice(0,160)}\nPencere: ${p.data?.windowStart}-${p.data?.windowEnd}\n${prefix}onay / ${prefix}iptal`;
+        reply = `❓ OTOX metni alındı.\n${args.slice(0,160)}\nPencere: ${p.data?.windowStart || '-'}-${p.data?.windowEnd || '-'}\n${prefix}onay / ${prefix}iptal`;
       } else if (p.type === 'await_dm_text') {
         setPending(state, {
           type: 'confirm_dm',
@@ -1399,7 +1580,7 @@ try {
         });
         reply = `❓ DM metni alındı.\nGrup: ${p.data?.groupId}\n${args.slice(0,160)}\n${prefix}onay / ${prefix}iptal`;
       } else {
-        reply = 'Şu an metin beklenmiyor.';
+        reply = 'Şu an metin beklenmiyor. Önce !otox yaz.';
       }
       break;
     }
@@ -1622,7 +1803,10 @@ const activeNum = getActiveNumber(state);
 if (activeNum) logs.push(`activeNumber=${activeNum.name || activeNum.instanceId}`);
 
 // --- Broadcast worker ---
-if (state.broadcast?.running && state.broadcast.text) {
+const bTexts = Array.isArray(state.broadcast?.texts) && state.broadcast.texts.length
+  ? state.broadcast.texts
+  : (state.broadcast?.text ? [state.broadcast.text] : []);
+if (state.broadcast?.running && bTexts.length) {
   if (!inTimeWindow(state.broadcast.windowStart, state.broadcast.windowEnd)) {
     logs.push('broadcast: outside time window');
   } else {
@@ -1659,13 +1843,17 @@ if (state.broadcast?.running && state.broadcast.text) {
           state.broadcast.cycle = (state.broadcast.cycle || 0) + 1;
         }
         const target = list[state.broadcast.index];
-        await api.call(this, 'POST', 'sendMessage', { chatId: target, message: state.broadcast.text });
+        const tIdx = (Number(state.broadcast.textIndex) || 0) % bTexts.length;
+        const message = bTexts[tIdx];
+        await api.call(this, 'POST', 'sendMessage', { chatId: target, message });
+        state.broadcast.text = message;
+        state.broadcast.textIndex = (tIdx + 1) % bTexts.length;
         state.broadcast.index += 1;
         state.broadcast.sent += 1;
         state.broadcast.lastSendAt = now;
         state.stats.broadcastSent = (state.stats.broadcastSent || 0) + 1;
-        logs.push(`broadcast -> ${target}`);
-        await pushLog.call(this, state, 'broadcast', `grup ${target} | #${state.broadcast.sent}`);
+        logs.push(`broadcast -> ${target} text#${tIdx + 1}/${bTexts.length}`);
+        await pushLog.call(this, state, 'broadcast', `grup ${target} | metin ${tIdx + 1}/${bTexts.length} | #${state.broadcast.sent}`);
       } else {
         logs.push('broadcast: no eligible groups');
         state.broadcast.lastSendAt = now;

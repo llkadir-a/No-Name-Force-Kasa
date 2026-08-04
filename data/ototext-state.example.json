@@ -6,6 +6,8 @@
   "broadcast": {
     "running": false,
     "text": "",
+    "texts": [],
+    "textIndex": 0,
     "intervalMin": 3,
     "index": 0,
     "sent": 0,
