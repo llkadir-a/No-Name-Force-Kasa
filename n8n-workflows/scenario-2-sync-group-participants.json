@@ -1,0 +1,229 @@
+{
+  "name": "Ototext — Grup Katılımcı Senkronizasyonu",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Ototext — Senaryo 2\n- `ID_INSTANCE`, `API_TOKEN`, `SOURCE_GROUP_ID`, `TARGET_GROUP_ID` → `.env`\n- Manual veya Schedule ile başlatılır.\n\n**Green API:** `addGroupParticipant` + `participantChatId`\n`userChatId` Code çıktısından map edilir.\n\n**Rate limit:** Her ekleme öncesi 15 dakika.\n**Not:** Wait için workflow Active olmalıdır.",
+        "height": 420,
+        "width": 480,
+        "color": 4
+      },
+      "id": "sticky-s2-notes",
+      "name": "Kurulum Notları",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        120
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger-s2",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 7
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger-s2",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.green-api.com/waInstance{{ $env.ID_INSTANCE }}/getGroupData/{{ $env.API_TOKEN }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ groupId: $env.SOURCE_GROUP_ID || 'KAYNAK_GRUP_ID@g.us' }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "http-get-group-data-s2",
+      "name": "Green API - getGroupData",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// getGroupData yanıtındaki participants dizisini n8n item'larına dönüştürür\nconst response = $input.first().json;\nconst participants = Array.isArray(response.participants) ? response.participants : [];\n\nif (participants.length === 0) {\n  throw new Error('Kaynak grupta participants bulunamadı. SOURCE_GROUP_ID ve API yanıtını kontrol edin.');\n}\n\nconst targetGroupId = $env.TARGET_GROUP_ID || 'HEDEF_GRUP_ID@g.us';\n\nreturn participants\n  .filter((p) => p && p.id)\n  .map((participant, index) => ({\n    json: {\n      index: index + 1,\n      userChatId: participant.id,\n      isAdmin: !!participant.isAdmin,\n      isSuperAdmin: !!participant.isSuperAdmin,\n      targetGroupId\n    }\n  }));"
+      },
+      "id": "code-transform-participants-s2",
+      "name": "Participants → Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-over-items-s2",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 15,
+        "unit": "minutes"
+      },
+      "id": "wait-15min-s2",
+      "name": "Wait 15 Minutes",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1060,
+        400
+      ],
+      "webhookId": "wait-15min-s2-webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.green-api.com/waInstance{{ $env.ID_INSTANCE }}/addGroupParticipant/{{ $env.API_TOKEN }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ groupId: $json.targetGroupId || $env.TARGET_GROUP_ID || 'HEDEF_GRUP_ID@g.us', participantChatId: $json.userChatId }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-add-participant-s2",
+      "name": "Green API - addGroupParticipant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Green API - getGroupData",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Green API - getGroupData",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Green API - getGroupData": {
+      "main": [
+        [
+          {
+            "node": "Participants → Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Participants → Items": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Wait 15 Minutes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Wait 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Green API - addGroupParticipant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Green API - addGroupParticipant": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "41ed2b6d-991b-4ab2-b3a4-9b45d1896670",
+  "versionId": "e7781247-08ea-4ec3-9cfb-6a6010bf19a3",
+  "active": false
+}

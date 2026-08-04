@@ -1,0 +1,86 @@
+{
+  "admins": [],
+  "botWid": "",
+  "numbers": [],
+  "activeNumberId": "",
+  "broadcast": {
+    "running": false,
+    "text": "",
+    "texts": [],
+    "textIndex": 0,
+    "intervalMin": 3,
+    "index": 0,
+    "sent": 0,
+    "lastSendAt": 0,
+    "startedAt": 0,
+    "cycle": 0,
+    "windowStart": "",
+    "windowEnd": ""
+  },
+  "dm": {
+    "running": false,
+    "text": "",
+    "groupId": "",
+    "intervalMin": 3,
+    "queue": [],
+    "index": 0,
+    "sent": 0,
+    "failed": 0,
+    "lastSendAt": 0,
+    "startedAt": 0,
+    "windowStart": "",
+    "windowEnd": ""
+  },
+  "mining": {
+    "running": false,
+    "targetGroupId": "",
+    "targetName": "",
+    "members": 0,
+    "addedToday": 0,
+    "pending": 0,
+    "totalTarget": 0,
+    "durationMin": 0,
+    "startedAt": 0,
+    "lastAddAt": 0,
+    "dayKey": ""
+  },
+  "filters": {
+    "minUye": 0
+  },
+  "blacklist": [],
+  "invites": [],
+  "stats": {
+    "commands": 0,
+    "broadcastSent": 0,
+    "dmSent": 0,
+    "joins": 0,
+    "startedAt": 0
+  },
+  "mainPrefix": "!",
+  "prefixes": [
+    "!"
+  ],
+  "logGroupId": "",
+  "pending": null,
+  "guard": {
+    "enabled": false,
+    "groups": {},
+    "stickerLimit": 4,
+    "stickerWindowMs": 15000,
+    "kickOnCall": true,
+    "kickOnStickerSpam": true,
+    "lockOnIncident": true,
+    "protectAdmins": true,
+    "stickerHits": {},
+    "lockedGroups": {}
+  },
+  "daily": {
+    "dayKey": "",
+    "broadcastSent": 0,
+    "dmSent": 0,
+    "errors": 0,
+    "starts": 0,
+    "stops": 0,
+    "events": []
+  }
+}

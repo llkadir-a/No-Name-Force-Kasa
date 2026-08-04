@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>NNF — Ototext Control</title>
+<!--
+  OTOTEXT ADMIN — TAŞINABİLİR KONTROL MERKEZİ
+  API: bash scripts/start-seller-panel.sh → http://127.0.0.1:8790
+  Bu HTML başka siteye kopyalanabilir; API_BASE'i ayarla.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@500;700;800&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg0: #070a0d;
+    --bg1: #0d1218;
+    --panel: #121820;
+    --panel2: #18212c;
+    --line: #243041;
+    --text: #e8eef7;
+    --muted: #8b9bb0;
+    --acc: #3dff9a;
+    --acc2: #1fd6ff;
+    --warn: #ffc857;
+    --danger: #ff5c7a;
+    --ok: #3dff9a;
+    --radius: 14px;
+    --font: "Syne", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    color: var(--text);
+    font-family: var(--font);
+    background:
+      radial-gradient(900px 500px at 10% -10%, rgba(61,255,154,.12), transparent 55%),
+      radial-gradient(700px 400px at 100% 0%, rgba(31,214,255,.10), transparent 50%),
+      linear-gradient(180deg, var(--bg1), var(--bg0));
+  }
+  .app {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    min-height: 100vh;
+  }
+  @media (max-width: 920px) {
+    .app { grid-template-columns: 1fr; }
+    .side { position: sticky; top: 0; z-index: 20; border-right: 0; border-bottom: 1px solid var(--line); }
+    .nav { display: flex; flex-wrap: wrap; gap: 6px; }
+    .nav button { width: auto; padding: 8px 10px; }
+  }
+  .side {
+    background: rgba(10,14,20,.85);
+    border-right: 1px solid var(--line);
+    padding: 18px 14px;
+    backdrop-filter: blur(10px);
+  }
+  .brand {
+    font-weight: 800;
+    letter-spacing: .04em;
+    font-size: 1.05rem;
+    background: linear-gradient(90deg, var(--acc), var(--acc2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    margin-bottom: 4px;
+  }
+  .side .sub { color: var(--muted); font-size: .72rem; font-family: var(--mono); margin-bottom: 16px; }
+  .nav { display: grid; gap: 6px; }
+  .nav button {
+    text-align: left;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font: inherit;
+    font-weight: 700;
+    font-size: .86rem;
+    cursor: pointer;
+  }
+  .nav button:hover { color: var(--text); background: var(--panel); }
+  .nav button.active {
+    color: #062418;
+    background: linear-gradient(90deg, var(--acc), #7dffc0);
+    border-color: transparent;
+  }
+  .main { padding: 18px 18px 48px; }
+  .topbar {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: end; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .topbar h1 { margin: 0; font-size: 1.45rem; font-weight: 800; }
+  .topbar p { margin: 4px 0 0; color: var(--muted); font-size: .86rem; }
+  .api-box {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: end;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 10px;
+  }
+  .api-box > div { min-width: 220px; flex: 1; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 800px) { .stats { grid-template-columns: 1fr 1fr; } }
+  .stat {
+    background: linear-gradient(160deg, var(--panel2), var(--panel));
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat::after {
+    content: "";
+    position: absolute; inset: auto -20% -40% auto;
+    width: 80px; height: 80px;
+    background: radial-gradient(circle, rgba(61,255,154,.18), transparent 70%);
+  }
+  .stat b { display: block; font-family: var(--mono); font-size: 1.15rem; margin-top: 4px; }
+  .stat span { color: var(--muted); font-size: .72rem; letter-spacing: .04em; text-transform: uppercase; }
+  .panel {
+    display: none;
+    animation: in .28s ease;
+  }
+  .panel.active { display: block; }
+  @keyframes in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  .grid { display: grid; gap: 12px; }
+  @media (min-width: 900px) { .grid.cols-2 { grid-template-columns: 1fr 1fr; } }
+  .card {
+    background: rgba(18,24,32,.92);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    box-shadow: 0 10px 40px rgba(0,0,0,.25);
+  }
+  .card h3 {
+    margin: 0 0 10px;
+    font-size: 1rem;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .card h3 .tag {
+    font-family: var(--mono);
+    font-size: .68rem;
+    color: var(--acc2);
+    border: 1px solid #254055;
+    padding: 3px 7px;
+    border-radius: 999px;
+    font-weight: 500;
+  }
+  label { display: block; font-size: .72rem; color: var(--muted); margin: 10px 0 5px; font-family: var(--mono); }
+  input, select, textarea {
+    width: 100%;
+    border: 1px solid var(--line);
+    background: #0b1016;
+    color: var(--text);
+    border-radius: 10px;
+    padding: 11px 12px;
+    font-size: 15px;
+    font-family: var(--mono);
+  }
+  textarea { min-height: 110px; resize: vertical; line-height: 1.4; }
+  textarea.code { min-height: 360px; font-size: 12px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 640px) { .row { grid-template-columns: 1fr; } }
+  .checks { display: grid; gap: 8px; margin-top: 8px; }
+  .checks label {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0; color: var(--text); font-family: var(--font); font-size: .88rem;
+  }
+  .checks input { width: auto; }
+  button, .btn {
+    border: 0;
+    border-radius: 10px;
+    padding: 11px 14px;
+    font-weight: 800;
+    font-family: inherit;
+    background: linear-gradient(90deg, var(--acc), #7dffc0);
+    color: #062418;
+    cursor: pointer;
+  }
+  button.secondary, .btn.secondary { background: #243041; color: var(--text); }
+  button.danger, .btn.danger { background: linear-gradient(90deg, var(--danger), #ff8aa0); color: #1a0505; }
+  button.warn, .btn.warn { background: linear-gradient(90deg, var(--warn), #ffe09a); color: #2a1c00; }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .actions button { width: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .key { word-break: break-all; font-family: var(--mono); font-size: .7rem; color: #b7f7d4; }
+  .ok { color: var(--ok); }
+  .bad { color: var(--danger); }
+  .muted { color: var(--muted); font-size: .8rem; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: .72rem;
+    padding: 4px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  .pill.on { color: #062418; background: var(--acc); border-color: transparent; }
+  .pill.off { color: var(--danger); border-color: #5a2432; }
+  #toast {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+    background: #101820; border: 1px solid var(--acc); color: var(--text);
+    padding: 10px 14px; border-radius: 10px; display: none; z-index: 50;
+    max-width: 92vw; font-size: .85rem; font-family: var(--mono);
+    box-shadow: 0 10px 40px rgba(61,255,154,.15);
+  }
+  .logbox {
+    max-height: 280px; overflow: auto;
+    font-family: var(--mono); font-size: .72rem;
+    background: #0b1016; border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px;
+  }
+  .logbox div { padding: 4px 0; border-bottom: 1px dashed #1c2733; }
+  .hint { color: var(--muted); font-size: .78rem; line-height: 1.45; margin: 0 0 8px; }
+  .qrbox {
+    margin: 12px auto;
+    width: min(280px, 80vw);
+    aspect-ratio: 1;
+    background: #fff;
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    box-shadow: 0 12px 40px rgba(61,255,154,.12);
+  }
+  .qrbox img { width: 100%; height: 100%; object-fit: contain; }
+  .qrbox .empty { color: #666; font-family: var(--mono); font-size: .8rem; padding: 16px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">NNF · OTOTEXT</div>
+    <div class="sub" id="apiLabel">API offline</div>
+    <nav class="nav" id="nav">
+      <button data-tab="overview" class="active">Overview</button>
+      <button data-tab="qr">QR Bağlan</button>
+      <button data-tab="general">Genel / Log</button>
+      <button data-tab="broadcast">Yayın (Otox)</button>
+      <button data-tab="dm">DM</button>
+      <button data-tab="guard">Guard</button>
+      <button data-tab="numbers">Numaralar</button>
+      <button data-tab="access">Admin / Black</button>
+      <button data-tab="live">Canlı / Loglar</button>
+      <button data-tab="licenses">Lisanslar</button>
+      <button data-tab="json">JSON Lab</button>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Control Center</h1>
+        <p>Log kanalı, yayın, guard, numaralar, adminler — hepsi buradan.</p>
+      </div>
+      <div class="api-box">
+        <div>
+          <label>Seller API base</label>
+          <input id="apiBase" placeholder="http://127.0.0.1:8790"/>
+        </div>
+        <button type="button" class="secondary" id="btnSaveApi">Kaydet</button>
+        <button type="button" class="ghost" id="btnReload">State Yenile</button>
+        <button type="button" class="danger" id="btnPanicTop">PANIC</button>
+      </div>
+    </div>
+
+    <div class="stats" id="statsBar">
+      <div class="stat"><span>Otox</span><b id="stOtox">—</b></div>
+      <div class="stat"><span>DM</span><b id="stDm">—</b></div>
+      <div class="stat"><span>Guard</span><b id="stGuard">—</b></div>
+      <div class="stat"><span>Log Grup</span><b id="stLog" style="font-size:.85rem">—</b></div>
+    </div>
+
+    <!-- OVERVIEW -->
+    <section class="panel active" id="tab-overview">
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>Hızlı kontrol <span class="tag">LIVE</span></h3>
+          <p class="hint">Bot state dosyasını canlı okur / yazar. WhatsApp hesabına girmez.</p>
+          <div class="actions">
+            <button type="button" id="btnStartOtox">Otox Başlat</button>
+            <button type="button" class="secondary" id="btnStopOtox">Otox Durdur</button>
+            <button type="button" class="secondary" id="btnStopDm">DM Durdur</button>
+            <button type="button" class="warn" id="btnClearPending">Pending Temizle</button>
+            <button type="button" class="danger" id="btnPanic">PANIC</button>
+          </div>
+          <pre class="muted" id="overviewOut" style="margin-top:12px;white-space:pre-wrap"></pre>
+        </div>
+        <div class="card">
+          <h3>Sistem özeti</h3>
+          <div id="overviewMeta" class="muted">Yükleniyor…</div>
+          <div class="actions">
+            <button type="button" class="secondary" id="btnGoQr">QR ile bağlan</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- QR -->
+    <section class="panel" id="tab-qr">
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>WhatsApp QR <span class="tag">GREEN API</span></h3>
+          <p class="hint">Aktif numaranın QR kodunu gösterir. WhatsApp → Bağlı cihazlar → Cihaz bağla → bu QR’ı okut. Kod ~20 sn’de yenilenir.</p>
+          <label>Numara (boş = aktif)</label>
+          <select id="qrNumberSelect"><option value="">Aktif numara</option></select>
+          <div class="actions">
+            <button type="button" id="btnQrStart">QR Göster / Yenile</button>
+            <button type="button" class="secondary" id="btnQrStop">Durdur</button>
+          </div>
+          <div class="qrbox" id="qrBox"><div class="empty" id="qrEmpty">Henüz QR yok</div><img id="qrImg" alt="QR" style="display:none"/></div>
+          <p class="muted" id="qrStatus">Durum: —</p>
+          <p class="muted" id="qrMeta"></p>
+          <div class="actions">
+            <a id="qrPageLink" class="btn secondary" href="#" target="_blank" rel="noopener" style="display:none;text-decoration:none;text-align:center">Green API QR sayfası</a>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Nasıl okutursun?</h3>
+          <p class="hint">1) Soldan <b>QR Göster</b><br/>2) Telefonda WhatsApp → ⋮ / Ayarlar → Bağlı cihazlar → Cihaz bağla<br/>3) Bu ekrandaki kodu okut<br/>4) Durum <span class="ok">authorized</span> olunca bitti</p>
+          <p class="hint">Credentials: Numaralar sekmesi veya sunucu <code>.env</code> içindeki ID_INSTANCE / API_TOKEN.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- GENERAL -->
+    <section class="panel" id="tab-general">
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>Log kanalı <span class="tag">!log-grup</span></h3>
+          <p class="hint">Ban/kısıtlama uyarıları ve bot logları bu gruba düşer.</p>
+          <label>logGroupId (@g.us)</label>
+          <input id="logGroupId" placeholder="120363...@g.us"/>
+          <div class="row">
+            <div>
+              <label>Ana prefix</label>
+              <input id="mainPrefix" placeholder="!"/>
+            </div>
+            <div>
+              <label>Tüm prefixler (virgül)</label>
+              <input id="prefixes" placeholder="!, /"/>
+            </div>
+          </div>
+          <label>Bot WID</label>
+          <input id="botWid" placeholder="905...@c.us"/>
+          <label>Min üye filtresi</label>
+          <input id="minUye" type="number" min="0" value="0"/>
+          <div class="actions">
+            <button type="button" id="btnSaveGeneral">Geneli Kaydet</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Mining</h3>
+          <div class="checks">
+            <label><input type="checkbox" id="miningRunning"/> Mining çalışıyor</label>
+          </div>
+          <label>Hedef grup ID</label>
+          <input id="miningTarget" placeholder="120363...@g.us"/>
+          <label>Toplam hedef</label>
+          <input id="miningTotal" type="number" min="0" value="0"/>
+          <div class="actions">
+            <button type="button" id="btnSaveMining">Mining Kaydet</button>
+            <button type="button" class="secondary" id="btnStopMining">Durdur</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- BROADCAST -->
+    <section class="panel" id="tab-broadcast">
+      <div class="card">
+        <h3>Yayın (Otox) <span class="tag" id="otoxPill">OFF</span></h3>
+        <div class="checks">
+          <label><input type="checkbox" id="bRunning"/> Yayın açık (running)</label>
+        </div>
+        <div class="row">
+          <div>
+            <label>Aralık (dk)</label>
+            <input id="bInterval" type="number" min="0.1" step="0.1" value="3"/>
+          </div>
+          <div>
+            <label>Text index</label>
+            <input id="bTextIndex" type="number" min="0" value="0"/>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Pencere başlangıç (HH:MM)</label>
+            <input id="bWinStart" placeholder="22:00"/>
+          </div>
+          <div>
+            <label>Pencere bitiş</label>
+            <input id="bWinEnd" placeholder="01:00"/>
+          </div>
+        </div>
+        <label>Aktif tek metin</label>
+        <textarea id="bText" placeholder="Yayın metni"></textarea>
+        <label>Rotasyon metinleri (her satır 1 metin; görsel için JSON Lab kullan: {"text":"...","imageUrl":"https://...jpg"})</label>
+        <textarea id="bTexts" placeholder="metin 1&#10;metin 2"></textarea>
+        <div class="actions">
+          <button type="button" id="btnSaveBroadcast">Yayını Kaydet</button>
+          <button type="button" class="secondary" id="btnStopBroadcast2">Durdur</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- DM -->
+    <section class="panel" id="tab-dm">
+      <div class="card">
+        <h3>DM motoru <span class="tag" id="dmPill">OFF</span></h3>
+        <div class="checks">
+          <label><input type="checkbox" id="dRunning"/> DM açık</label>
+        </div>
+        <div class="row">
+          <div>
+            <label>Kaynak grup ID</label>
+            <input id="dGroupId" placeholder="120363...@g.us"/>
+          </div>
+          <div>
+            <label>Aralık (dk)</label>
+            <input id="dInterval" type="number" min="0.1" step="0.1" value="3"/>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Pencere başlangıç</label>
+            <input id="dWinStart" placeholder="22:00"/>
+          </div>
+          <div>
+            <label>Pencere bitiş</label>
+            <input id="dWinEnd" placeholder="01:00"/>
+          </div>
+        </div>
+        <label>DM metni</label>
+        <textarea id="dText"></textarea>
+        <label>Kuyruk (her satır bir chatId) — dikkat: üzerine yazar</label>
+        <textarea id="dQueue" placeholder="905...@c.us"></textarea>
+        <p class="hint" id="dmMeta">sent/fail —</p>
+        <div class="actions">
+          <button type="button" id="btnSaveDm">DM Kaydet</button>
+          <button type="button" class="secondary" id="btnStopDm2">Durdur</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- GUARD -->
+    <section class="panel" id="tab-guard">
+      <div class="card">
+        <h3>Guard koruma</h3>
+        <div class="checks">
+          <label><input type="checkbox" id="gEnabled"/> Guard açık</label>
+          <label><input type="checkbox" id="gKickSticker"/> Sticker spam → kick</label>
+          <label><input type="checkbox" id="gKickCall"/> Arama → kick</label>
+          <label><input type="checkbox" id="gLock"/> Olayda sohbet kilitle</label>
+          <label><input type="checkbox" id="gProtectAdmins"/> Adminleri koru</label>
+        </div>
+        <div class="row">
+          <div>
+            <label>Sticker limit</label>
+            <input id="gStickerLimit" type="number" min="1" value="4"/>
+          </div>
+          <div>
+            <label>Pencere (ms)</label>
+            <input id="gStickerWindow" type="number" min="1000" value="15000"/>
+          </div>
+        </div>
+        <label>Özel gruplar (her satır groupId — boş = tüm gruplar)</label>
+        <textarea id="gGroups" placeholder="120363...@g.us"></textarea>
+        <div class="actions">
+          <button type="button" id="btnSaveGuard">Guard Kaydet</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- NUMBERS -->
+    <section class="panel" id="tab-numbers">
+      <div class="card">
+        <h3>WhatsApp numaraları</h3>
+        <p class="hint">Token alanında *** görürsen dokunma — eski token korunur. Yeni token yazarsan güncellenir.</p>
+        <label>Aktif numara id</label>
+        <input id="activeNumberId" placeholder="n1"/>
+        <label>Numaralar JSON dizisi</label>
+        <textarea class="code" id="numbersJson" spellcheck="false"></textarea>
+        <div class="actions">
+          <button type="button" id="btnSaveNumbers">Numaraları Kaydet</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ACCESS -->
+    <section class="panel" id="tab-access">
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>Adminler</h3>
+          <label>Her satır bir wid (@c.us)</label>
+          <textarea id="adminsList"></textarea>
+          <div class="actions"><button type="button" id="btnSaveAdmins">Adminleri Kaydet</button></div>
+        </div>
+        <div class="card">
+          <h3>Kara liste</h3>
+          <label>Her satır grup/numara id</label>
+          <textarea id="blacklist"></textarea>
+          <div class="actions"><button type="button" id="btnSaveBlack">Blacklist Kaydet</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- LIVE -->
+    <section class="panel" id="tab-live">
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>Günlük olaylar</h3>
+          <div class="actions" style="margin-top:0;margin-bottom:10px">
+            <button type="button" class="secondary" id="btnClearEvents">Eventleri Temizle</button>
+            <button type="button" class="secondary" id="btnClearInvites">Davetleri Temizle</button>
+          </div>
+          <div class="logbox" id="eventsBox">—</div>
+        </div>
+        <div class="card">
+          <h3>Pending / Health</h3>
+          <pre class="muted" id="pendingBox" style="white-space:pre-wrap;font-family:var(--mono);font-size:.75rem"></pre>
+          <pre class="muted" id="healthBox" style="white-space:pre-wrap;font-family:var(--mono);font-size:.75rem"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- LICENSES -->
+    <section class="panel" id="tab-licenses">
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>Yeni lisans + kit</h3>
+          <form id="create">
+            <label>Müşteri adı</label>
+            <input name="name" required placeholder="Ahmet"/>
+            <label>E-posta</label>
+            <input name="email" type="email"/>
+            <div class="row">
+              <div>
+                <label>Plan</label>
+                <select name="plan">
+                  <option value="standard">standard</option>
+                  <option value="pro">pro</option>
+                  <option value="lifetime">lifetime</option>
+                </select>
+              </div>
+              <div>
+                <label>Gün</label>
+                <input name="days" type="number" value="365" min="1"/>
+              </div>
+            </div>
+            <label>Green API ID_INSTANCE</label>
+            <input name="idInstance"/>
+            <label>Green API API_TOKEN</label>
+            <input name="apiToken"/>
+            <label>Not</label>
+            <input name="note"/>
+            <div class="actions"><button type="submit">Lisans Üret + ZIP</button></div>
+          </form>
+          <pre class="muted" id="createOut"></pre>
+        </div>
+        <div class="card">
+          <h3>Doğrula</h3>
+          <label>LICENSE_KEY</label>
+          <input id="verifyKey"/>
+          <div class="actions"><button type="button" class="secondary" id="btnVerify">Doğrula</button></div>
+          <pre class="muted" id="verifyOut"></pre>
+        </div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <h3>Müşteriler <button type="button" class="secondary" id="btnRefreshCust" style="width:auto;padding:6px 10px;font-size:.75rem">Yenile</button></h3>
+        <div id="list"><p class="muted">—</p></div>
+      </div>
+    </section>
+
+    <!-- JSON -->
+    <section class="panel" id="tab-json">
+      <div class="card">
+        <h3>JSON Lab <span class="tag">FULL POWER</span></h3>
+        <p class="hint">Tüm state’i düzenle. Kaydet = merge patch. “Replace” = dosyayı bu JSON ile değiştirir (dikkat).</p>
+        <textarea class="code" id="rawJson" spellcheck="false"></textarea>
+        <div class="actions">
+          <button type="button" id="btnSaveJson">Merge Kaydet</button>
+          <button type="button" class="warn" id="btnReplaceJson">Replace Kaydet</button>
+          <button type="button" class="secondary" id="btnReloadJson">Yeniden Yükle</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<div id="toast"></div>
+
+<script>
+const STORAGE_KEY = 'ototext_admin_api_base';
+const $ = (id) => document.getElementById(id);
+let STATE = null;
+let qrTimer = null;
+
+function apiBase() {
+  return ($('apiBase').value || localStorage.getItem(STORAGE_KEY) || '').replace(/\/$/, '');
+}
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.style.display = 'none'; }, 2800);
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (ch) => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[ch]));
+}
+function lines(v) {
+  return String(v || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+}
+async function api(path, opts = {}) {
+  const base = apiBase();
+  if (!base) throw new Error('Önce API adresini kaydet');
+  const r = await fetch(base + path, {
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    ...opts,
+  });
+  const ct = r.headers.get('content-type') || '';
+  if (ct.includes('application/zip')) return { zip: true, response: r };
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+async function patchBot(patch, replace = false) {
+  const j = await api('/api/bot/patch', {
+    method: 'POST',
+    body: JSON.stringify({ patch, replace }),
+  });
+  STATE = j.state;
+  fillAll();
+  return j;
+}
+async function action(name, extra = {}) {
+  const j = await api('/api/bot/action', {
+    method: 'POST',
+    body: JSON.stringify({ action: name, ...extra }),
+  });
+  await loadState();
+  return j;
+}
+
+function fillAll() {
+  if (!STATE) return;
+  const s = STATE;
+  const b = s.broadcast || {};
+  const d = s.dm || {};
+  const g = s.guard || {};
+  const m = s.mining || {};
+
+  $('stOtox').textContent = b.running ? 'ON' : 'OFF';
+  $('stDm').textContent = d.running ? 'ON' : 'OFF';
+  $('stGuard').textContent = g.enabled ? 'ON' : 'OFF';
+  $('stLog').textContent = s.logGroupId || 'yok';
+
+  $('logGroupId').value = s.logGroupId || '';
+  $('mainPrefix').value = s.mainPrefix || '!';
+  $('prefixes').value = (s.prefixes || []).join(', ');
+  $('botWid').value = s.botWid || '';
+  $('minUye').value = (s.filters && s.filters.minUye) || 0;
+
+  $('miningRunning').checked = !!m.running;
+  $('miningTarget').value = m.targetGroupId || '';
+  $('miningTotal').value = m.totalTarget || 0;
+
+  $('bRunning').checked = !!b.running;
+  $('bInterval').value = b.intervalMin ?? 3;
+  $('bTextIndex').value = b.textIndex || 0;
+  $('bWinStart').value = b.windowStart || '';
+  $('bWinEnd').value = b.windowEnd || '';
+  $('bText').value = b.text || '';
+  $('bTexts').value = (Array.isArray(b.texts) ? b.texts : []).join('\n');
+  $('otoxPill').textContent = b.running ? 'ON' : 'OFF';
+
+  $('dRunning').checked = !!d.running;
+  $('dGroupId').value = d.groupId || '';
+  $('dInterval').value = d.intervalMin ?? 3;
+  $('dWinStart').value = d.windowStart || '';
+  $('dWinEnd').value = d.windowEnd || '';
+  $('dText').value = d.text || '';
+  $('dQueue').value = (Array.isArray(d.queue) ? d.queue : []).join('\n');
+  $('dmPill').textContent = d.running ? 'ON' : 'OFF';
+  $('dmMeta').textContent = `sent ${d.sent || 0} · fail ${d.failed || 0} · index ${d.index || 0} · queue ${(d.queue || []).length}`;
+
+  $('gEnabled').checked = !!g.enabled;
+  $('gKickSticker').checked = g.kickOnStickerSpam !== false;
+  $('gKickCall').checked = g.kickOnCall !== false;
+  $('gLock').checked = g.lockOnIncident !== false;
+  $('gProtectAdmins').checked = g.protectAdmins !== false;
+  $('gStickerLimit').value = g.stickerLimit ?? 4;
+  $('gStickerWindow').value = g.stickerWindowMs ?? 15000;
+  const gids = Object.keys(g.groups || {}).filter((k) => g.groups[k]);
+  $('gGroups').value = gids.join('\n');
+
+  $('activeNumberId').value = s.activeNumberId || '';
+  $('numbersJson').value = JSON.stringify(s.numbers || [], null, 2);
+  const sel = $('qrNumberSelect');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">Aktif numara</option>';
+  for (const n of (s.numbers || [])) {
+    const opt = document.createElement('option');
+    opt.value = n.id || n.instanceId || '';
+    opt.textContent = `${n.name || 'numara'} · ${n.instanceId || ''}`;
+    sel.appendChild(opt);
+  }
+  if (prev) sel.value = prev;
+  $('adminsList').value = (s.admins || []).join('\n');
+  $('blacklist').value = (s.blacklist || []).join('\n');
+
+  const ev = ((s.daily || {}).events || []).slice(0, 40);
+  $('eventsBox').innerHTML = ev.length
+    ? ev.map((e) => `<div><span class="ok">[${escapeHtml(e.type)}]</span> ${escapeHtml(e.message || '')}</div>`).join('')
+    : '<div class="muted">Olay yok</div>';
+  $('pendingBox').textContent = 'pending:\n' + JSON.stringify(s.pending || null, null, 2);
+  $('healthBox').textContent = 'healthWatch:\n' + JSON.stringify(s.healthWatch || {}, null, 2);
+  $('rawJson').value = JSON.stringify(s, null, 2);
+
+  const nums = s.numbers || [];
+  const active = nums.find((n) => n.id === s.activeNumberId) || nums[0];
+  $('overviewMeta').innerHTML = `
+    <p><span class="pill ${b.running ? 'on' : 'off'}">otox ${b.running ? 'ON' : 'OFF'}</span>
+       <span class="pill ${d.running ? 'on' : 'off'}">dm ${d.running ? 'ON' : 'OFF'}</span>
+       <span class="pill ${g.enabled ? 'on' : 'off'}">guard ${g.enabled ? 'ON' : 'OFF'}</span></p>
+    <p class="muted">Prefix: <b style="color:var(--text)">${escapeHtml(s.mainPrefix || '!')}</b>
+      · Prefixler: ${(s.prefixes || []).map(escapeHtml).join(', ')}</p>
+    <p class="muted">Aktif numara: <b style="color:var(--text)">${escapeHtml((active && (active.name || active.id)) || '-')}</b>
+      · instance ${escapeHtml((active && active.instanceId) || '-')}</p>
+    <p class="muted">Log: <b style="color:var(--text)">${escapeHtml(s.logGroupId || 'ayarlı değil')}</b></p>
+    <p class="muted">Stats: cmd ${s.stats?.commands || 0} · otox ${s.stats?.broadcastSent || 0} · dm ${s.stats?.dmSent || 0}</p>
+    <p class="muted">Daily: otox ${s.daily?.broadcastSent || 0} · dm ${s.daily?.dmSent || 0} · err ${s.daily?.errors || 0}</p>
+  `;
+}
+
+async function loadState() {
+  const j = await api('/api/bot/state');
+  STATE = j.state;
+  fillAll();
+  $('apiLabel').textContent = 'API online · state ok';
+  return j;
+}
+
+function switchTab(name) {
+  document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === 'tab-' + name));
+  if (name === 'qr') refreshQr().catch(() => {});
+  else stopQrPoll();
+}
+
+/* tabs */
+document.querySelectorAll('#nav button').forEach((btn) => {
+  btn.onclick = () => switchTab(btn.dataset.tab);
+});
+$('btnGoQr').onclick = () => switchTab('qr');
+
+async function refreshQr() {
+  const nid = $('qrNumberSelect').value;
+  const path = '/api/bot/qr' + (nid ? ('?numberId=' + encodeURIComponent(nid)) : '');
+  const j = await api(path);
+  const img = $('qrImg');
+  const empty = $('qrEmpty');
+  if (j.qrDataUrl) {
+    img.src = j.qrDataUrl;
+    img.style.display = 'block';
+    empty.style.display = 'none';
+  } else {
+    img.style.display = 'none';
+    empty.style.display = 'block';
+    empty.textContent = j.authorized
+      ? 'Bağlı — QR gerekmez'
+      : (j.message || j.error || 'QR yok');
+  }
+  $('qrStatus').innerHTML = j.authorized
+    ? 'Durum: <span class="ok">authorized</span> — WhatsApp bağlı'
+    : ('Durum: ' + escapeHtml(j.state || j.type || '?') + (j.message ? (' — ' + escapeHtml(j.message)) : ''));
+  const n = j.number || {};
+  $('qrMeta').textContent = n.instanceId
+    ? `Numara: ${n.name || '-'} · instance ${n.instanceId} · kaynak ${n.source || '-'}`
+    : (j.error || '');
+  const link = $('qrPageLink');
+  if (j.qrPage) {
+    link.href = j.qrPage;
+    link.style.display = 'inline-block';
+  } else {
+    link.style.display = 'none';
+  }
+  if (j.authorized) stopQrPoll();
+  return j;
+}
+
+function startQrPoll() {
+  stopQrPoll();
+  refreshQr().catch((e) => { $('qrStatus').textContent = String(e.message || e); });
+  qrTimer = setInterval(() => {
+    refreshQr().catch(() => {});
+  }, 12000);
+}
+
+function stopQrPoll() {
+  if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+}
+
+$('btnQrStart').onclick = () => { startQrPoll(); toast('QR yenileniyor…'); };
+$('btnQrStop').onclick = () => { stopQrPoll(); toast('QR yenileme durdu'); };
+$('qrNumberSelect').onchange = () => { if (qrTimer || $('tab-qr').classList.contains('active')) startQrPoll(); };
+
+$('btnSaveApi').onclick = () => {
+  const v = $('apiBase').value.trim().replace(/\/$/, '');
+  localStorage.setItem(STORAGE_KEY, v);
+  $('apiLabel').textContent = 'API: ' + (v || '—');
+  toast('API kaydedildi');
+  loadState().catch((e) => toast(String(e.message || e)));
+};
+$('btnReload').onclick = () => loadState().then(() => toast('State yenilendi')).catch((e) => toast(String(e.message || e)));
+$('btnReloadJson').onclick = () => loadState().then(() => toast('JSON yüklendi'));
+
+async function runAction(name) {
+  try {
+    const j = await action(name);
+    $('overviewOut').textContent = JSON.stringify(j, null, 2);
+    toast(name + ' OK');
+  } catch (e) {
+    toast(String(e.message || e));
+  }
+}
+$('btnPanic').onclick = $('btnPanicTop').onclick = async () => {
+  if (!confirm('PANIC: otox/dm/mining/pending duracak. Emin misin?')) return;
+  runAction('panic');
+};
+$('btnStartOtox').onclick = () => runAction('start_broadcast');
+$('btnStopOtox').onclick = $('btnStopBroadcast2').onclick = () => runAction('stop_broadcast');
+$('btnStopDm').onclick = $('btnStopDm2').onclick = () => runAction('stop_dm');
+$('btnStopMining').onclick = () => runAction('stop_mining');
+$('btnClearPending').onclick = () => runAction('clear_pending');
+$('btnClearEvents').onclick = () => runAction('clear_daily_events');
+$('btnClearInvites').onclick = () => runAction('clear_invites');
+
+$('btnSaveGeneral').onclick = async () => {
+  try {
+    await patchBot({
+      logGroupId: $('logGroupId').value.trim(),
+      mainPrefix: $('mainPrefix').value.trim() || '!',
+      prefixes: $('prefixes').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean),
+      botWid: $('botWid').value.trim(),
+      filters: { minUye: Number($('minUye').value || 0) },
+    });
+    toast('Genel kaydedildi');
+  } catch (e) { toast(String(e.message || e)); }
+};
+$('btnSaveMining').onclick = async () => {
+  try {
+    await patchBot({
+      mining: {
+        running: $('miningRunning').checked,
+        targetGroupId: $('miningTarget').value.trim(),
+        totalTarget: Number($('miningTotal').value || 0),
+      },
+    });
+    toast('Mining kaydedildi');
+  } catch (e) { toast(String(e.message || e)); }
+};
+$('btnSaveBroadcast').onclick = async () => {
+  try {
+    const texts = lines($('bTexts').value);
+    await patchBot({
+      broadcast: {
+        running: $('bRunning').checked,
+        intervalMin: Number($('bInterval').value || 3),
+        textIndex: Number($('bTextIndex').value || 0),
+        windowStart: $('bWinStart').value.trim(),
+        windowEnd: $('bWinEnd').value.trim(),
+        text: $('bText').value,
+        texts,
+      },
+    });
+    toast('Yayın kaydedildi');
+  } catch (e) { toast(String(e.message || e)); }
+};
+$('btnSaveDm').onclick = async () => {
+  try {
+    await patchBot({
+      dm: {
+        running: $('dRunning').checked,
+        groupId: $('dGroupId').value.trim(),
+        intervalMin: Number($('dInterval').value || 3),
+        windowStart: $('dWinStart').value.trim(),
+        windowEnd: $('dWinEnd').value.trim(),
+        text: $('dText').value,
+        queue: lines($('dQueue').value),
+      },
+    });
+    toast('DM kaydedildi');
+  } catch (e) { toast(String(e.message || e)); }
+};
+$('btnSaveGuard').onclick = async () => {
+  try {
+    const groups = {};
+    for (const id of lines($('gGroups').value)) groups[id] = true;
+    await patchBot({
+      guard: {
+        enabled: $('gEnabled').checked,
+        kickOnStickerSpam: $('gKickSticker').checked,
+        kickOnCall: $('gKickCall').checked,
+        lockOnIncident: $('gLock').checked,
+        protectAdmins: $('gProtectAdmins').checked,
+        stickerLimit: Number($('gStickerLimit').value || 4),
+        stickerWindowMs: Number($('gStickerWindow').value || 15000),
+        groups,
+      },
+    });
+    toast('Guard kaydedildi');
+  } catch (e) { toast(String(e.message || e)); }
+};
+$('btnSaveNumbers').onclick = async () => {
+  try {
+    const numbers = JSON.parse($('numbersJson').value || '[]');
+    if (!Array.isArray(numbers)) throw new Error('numbers dizi olmalı');
+    await patchBot({
+      activeNumberId: $('activeNumberId').value.trim(),
+      numbers,
+    });
+    toast('Numaralar kaydedildi');
+  } catch (e) { toast(String(e.message || e)); }
+};
+$('btnSaveAdmins').onclick = async () => {
+  try {
+    await patchBot({ admins: lines($('adminsList').value) });
+    toast('Adminler kaydedildi');
+  } catch (e) { toast(String(e.message || e)); }
+};
+$('btnSaveBlack').onclick = async () => {
+  try {
+    await patchBot({ blacklist: lines($('blacklist').value) });
+    toast('Blacklist kaydedildi');
+  } catch (e) { toast(String(e.message || e)); }
+};
+$('btnSaveJson').onclick = async () => {
+  try {
+    const obj = JSON.parse($('rawJson').value);
+    await patchBot(obj, false);
+    toast('JSON merge OK');
+  } catch (e) { toast(String(e.message || e)); }
+};
+$('btnReplaceJson').onclick = async () => {
+  if (!confirm('REPLACE: state bu JSON ile değişecek. Emin misin?')) return;
+  try {
+    const obj = JSON.parse($('rawJson').value);
+    await patchBot(obj, true);
+    toast('JSON replace OK');
+  } catch (e) { toast(String(e.message || e)); }
+};
+
+/* licenses */
+async function refreshCustomers() {
+  try {
+    const j = await api('/api/customers');
+    const rows = (j.customers || []).slice().reverse();
+    if (!rows.length) { $('list').innerHTML = '<p class="muted">Henüz müşteri yok.</p>'; return; }
+    let html = '<table><tr><th>Müşteri</th><th>Durum</th><th>Key</th><th></th></tr>';
+    for (const c of rows) {
+      const st = c.revoked ? '<span class="bad">IPTAL</span>' : '<span class="ok">AKTIF</span>';
+      html += `<tr>
+        <td><b>${escapeHtml(c.name || '-')}</b><br/><span class="muted">${escapeHtml(c.plan)} / ${c.days}g</span></td>
+        <td>${st}</td>
+        <td><div class="muted">${escapeHtml(c.jti || '')}</div><div class="key">${escapeHtml(c.licenseKey || '')}</div></td>
+        <td class="actions" style="margin:0">
+          <button class="secondary" data-kit="${escapeHtml(c.jti)}">ZIP</button>
+          ${c.revoked ? '' : `<button class="danger" data-revoke="${escapeHtml(c.jti)}">İptal</button>`}
+        </td>
+      </tr>`;
+    }
+    html += '</table>';
+    $('list').innerHTML = html;
+    $('list').querySelectorAll('[data-kit]').forEach((btn) => {
+      btn.onclick = () => downloadKit(btn.getAttribute('data-kit'));
+    });
+    $('list').querySelectorAll('[data-revoke]').forEach((btn) => {
+      btn.onclick = async () => {
+        if (!confirm('İptal?')) return;
+        await api('/api/revoke', { method: 'POST', body: JSON.stringify({ jti: btn.getAttribute('data-revoke') }) });
+        toast('İptal');
+        refreshCustomers();
+      };
+    });
+  } catch (e) {
+    $('list').innerHTML = '<p class="bad">' + escapeHtml(String(e.message || e)) + '</p>';
+  }
+}
+async function downloadKit(jti, extra = {}) {
+  const base = apiBase();
+  const r = await fetch(base + '/api/kit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jti, ...extra }),
+  });
+  const ct = r.headers.get('content-type') || '';
+  if (!ct.includes('application/zip')) {
+    const j = await r.json();
+    throw new Error(j.error || 'ZIP alınamadı');
+  }
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (jti || 'ototext').slice(0, 8) + '-kit.zip';
+  a.click();
+  toast('ZIP indirildi');
+}
+$('create').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData($('create')).entries());
+  body.days = Number(body.days || 365);
+  try {
+    const j = await api('/api/create', { method: 'POST', body: JSON.stringify(body) });
+    $('createOut').textContent = 'OK\nJTI=' + j.customer.jti + '\nKEY=' + j.customer.licenseKey;
+    await downloadKit(j.customer.jti, { idInstance: body.idInstance || '', apiToken: body.apiToken || '' });
+    refreshCustomers();
+  } catch (err) {
+    $('createOut').textContent = 'HATA\n' + (err.message || err);
+  }
+});
+$('btnVerify').onclick = async () => {
+  try {
+    const j = await api('/api/verify', { method: 'POST', body: JSON.stringify({ key: $('verifyKey').value.trim() }) });
+    $('verifyOut').textContent = JSON.stringify(j, null, 2);
+  } catch (e) { $('verifyOut').textContent = String(e.message || e); }
+};
+$('btnRefreshCust').onclick = refreshCustomers;
+
+(async function init() {
+  const saved = localStorage.getItem(STORAGE_KEY) || (location.origin.includes('8790') ? location.origin : 'http://127.0.0.1:8790');
+  $('apiBase').value = saved;
+  $('apiLabel').textContent = 'API: ' + saved;
+  try {
+    await loadState();
+    await refreshCustomers();
+  } catch (e) {
+    $('apiLabel').textContent = 'API offline';
+    $('overviewMeta').textContent = String(e.message || e);
+  }
+  setInterval(() => {
+    if (document.hidden) return;
+    loadState().catch(() => {});
+  }, 15000);
+})();
+</script>
+</body>
+</html>
