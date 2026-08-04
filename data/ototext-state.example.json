@@ -1,6 +1,8 @@
 {
   "admins": [],
   "botWid": "",
+  "numbers": [],
+  "activeNumberId": "",
   "broadcast": {
     "running": false,
     "text": "",

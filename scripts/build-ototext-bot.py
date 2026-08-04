@@ -35,6 +35,8 @@ function defaultState() {
     botWid: '',
     mainPrefix: main,
     prefixes: [main],
+    numbers: [],
+    activeNumberId: '',
     broadcast: { running: false, text: '', intervalMin: 3, index: 0, sent: 0, lastSendAt: 0, startedAt: 0, cycle: 0, windowStart: '', windowEnd: '' },
     dm: { running: false, text: '', groupId: '', intervalMin: 3, queue: [], index: 0, sent: 0, failed: 0, lastSendAt: 0, startedAt: 0, windowStart: '', windowEnd: '' },
     mining: { running: false, targetGroupId: '', targetName: '', members: 0, addedToday: 0, pending: 0, totalTarget: 0, durationMin: 0, startedAt: 0, lastAddAt: 0, dayKey: '' },
@@ -72,7 +74,59 @@ function ensureState() {
   s.broadcast.windowEnd = s.broadcast.windowEnd || '';
   s.dm.windowStart = s.dm.windowStart || '';
   s.dm.windowEnd = s.dm.windowEnd || '';
+  s.numbers = Array.isArray(s.numbers) ? s.numbers : [];
+  s.activeNumberId = s.activeNumberId || '';
+  ensureNumbers(s);
   return s;
+}
+
+function ensureNumbers(state) {
+  if (!Array.isArray(state.numbers)) state.numbers = [];
+  const envId = String($env.ID_INSTANCE || '').trim();
+  const envTok = String($env.API_TOKEN || '').trim();
+  if (envId && envTok && envId !== 'YOUR_INSTANCE_ID' && envTok !== 'YOUR_API_TOKEN_INSTANCE') {
+    let primary = state.numbers.find((n) => String(n.instanceId) === envId);
+    if (!primary) {
+      primary = {
+        id: 'n-primary',
+        name: 'Ana',
+        instanceId: envId,
+        apiToken: envTok,
+        wid: state.botWid || '',
+        addedAt: Date.now(),
+      };
+      state.numbers.unshift(primary);
+    } else {
+      primary.apiToken = envTok;
+      if (!primary.name) primary.name = 'Ana';
+    }
+  }
+  if (!state.activeNumberId && state.numbers.length) state.activeNumberId = state.numbers[0].id;
+  if (state.activeNumberId && !state.numbers.some((n) => n.id === state.activeNumberId) && state.numbers.length) {
+    state.activeNumberId = state.numbers[0].id;
+  }
+  return state;
+}
+
+function getNumberByRef(state, ref) {
+  const raw = String(ref || '').trim();
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) {
+    const idx = parseInt(raw, 10) - 1;
+    if (idx >= 0 && idx < state.numbers.length) return state.numbers[idx];
+  }
+  const low = raw.toLowerCase();
+  return state.numbers.find((n) => String(n.id) === raw || String(n.name || '').toLowerCase() === low || String(n.instanceId) === raw) || null;
+}
+
+function getActiveNumber(state) {
+  return state.numbers.find((n) => n.id === state.activeNumberId) || state.numbers[0] || null;
+}
+
+function formatNumberLine(n, i, activeId) {
+  const mark = n.id === activeId ? ' ✅' : '';
+  const phone = n.wid ? String(n.wid).replace('@c.us', '') : '-';
+  return `${i + 1}. ${n.name || 'Numara'}${mark}\n   tel: ${phone}\n   instance: ${n.instanceId}`;
 }
 
 function normalizePrefix(raw) {
@@ -184,9 +238,15 @@ function extractInviteLinks(text) {
   return Array.from(new Set((text || '').match(re) || []));
 }
 
+let CURRENT_CREDS = {
+  instanceId: String($env.ID_INSTANCE || ''),
+  apiToken: String($env.API_TOKEN || ''),
+};
+
 async function api(method, endpoint, body) {
-  const instance = $env.ID_INSTANCE;
-  const token = $env.API_TOKEN;
+  const instance = CURRENT_CREDS.instanceId;
+  const token = CURRENT_CREDS.apiToken;
+  if (!instance || !token) throw new Error('numara credentials yok');
   let url = `https://api.green-api.com/waInstance${instance}/${endpoint}/${token}`;
   if (method === 'GET' && body && typeof body === 'object') {
     const qs = new URLSearchParams(body).toString();
@@ -198,7 +258,12 @@ async function api(method, endpoint, body) {
   return this.helpers.httpRequest(opts);
 }
 
-async function ensureBotAdmin(state, incomingWid) {
+function setCredsFromNumber(num) {
+  if (!num) return;
+  CURRENT_CREDS = { instanceId: String(num.instanceId), apiToken: String(num.apiToken) };
+}
+
+async function ensureBotAdmin(state, incomingWid, num) {
   const envAdmins = String($env.BOT_ADMINS || '')
     .split(/[,;\s]+/)
     .map((x) => normId(x))
@@ -206,16 +271,23 @@ async function ensureBotAdmin(state, incomingWid) {
   for (const a of envAdmins) {
     if (!state.admins.includes(a)) state.admins.push(a);
   }
-  if (incomingWid) state.botWid = normId(incomingWid) || state.botWid;
-  if (!state.botWid) {
+  if (incomingWid) {
+    const wid = normId(incomingWid);
+    state.botWid = wid || state.botWid;
+    if (num && wid) num.wid = wid;
+  }
+  if (!(num && num.wid) && !state.botWid) {
     try {
       const settings = await api.call(this, 'GET', 'getSettings');
-      state.botWid = settings.wid || settings.phone || '';
+      const wid = settings.wid || settings.phone || '';
+      state.botWid = wid;
+      if (num) num.wid = wid;
     } catch (e) {}
+  } else if (num && num.wid) {
+    state.botWid = num.wid;
   }
-  if (state.botWid && !state.admins.includes(state.botWid)) {
-    state.admins.push(state.botWid);
-  }
+  const bot = normId(state.botWid);
+  if (bot && !state.admins.includes(bot)) state.admins.push(bot);
 }
 
 function isAdmin(state, sender, chatId) {
@@ -278,7 +350,20 @@ async function listGroupsPage(state, page) {
 
 const body = $json.body && typeof $json.body === 'object' ? $json.body : $json;
 const state = ensureState();
-await ensureBotAdmin.call(this, state, body.instanceData?.wid);
+const incomingInstance = String(
+  body.instanceData?.idInstance || body.idInstance || $env.ID_INSTANCE || ''
+);
+let sessionNumber =
+  state.numbers.find((n) => String(n.instanceId) === String(incomingInstance)) ||
+  getActiveNumber(state);
+if (sessionNumber) setCredsFromNumber(sessionNumber);
+else {
+  CURRENT_CREDS = {
+    instanceId: String($env.ID_INSTANCE || ''),
+    apiToken: String($env.API_TOKEN || ''),
+  };
+}
+await ensureBotAdmin.call(this, state, body.instanceData?.wid, sessionNumber);
 
 // Capture invite links from any incoming message
 if (body.typeWebhook === 'incomingMessageReceived') {
@@ -342,12 +427,26 @@ if (command === 'prefix' && args) {
     args = args.slice(a0.length).trim();
   }
 }
+if (command === 'numara' && args) {
+  const a0 = (args.split(/\s+/)[0] || '').toLowerCase();
+  if (['ekle', 'sil', 'aktif', 'liste', 'yenile'].includes(a0)) {
+    command = 'numara-' + a0;
+    args = args.slice(a0.length).trim();
+  }
+}
 const chatId = body.senderData?.chatId || '';
 const sender = body.senderData?.sender || chatId;
 
 if (!isAdmin(state, sender, chatId)) {
   saveState(state);
-  return [{ json: { chatId, reply: '⛔ Yetkisiz. Sadece adminler Ototext kullanabilir.' } }];
+  return [{
+    json: {
+      chatId,
+      reply: '⛔ Yetkisiz. Sadece adminler Ototext kullanabilir.',
+      instanceId: CURRENT_CREDS.instanceId,
+      apiToken: CURRENT_CREDS.apiToken,
+    },
+  }];
 }
 
 state.stats.commands = (state.stats.commands || 0) + 1;
@@ -375,8 +474,115 @@ try {
         `${prefix}davetler / ${prefix}filtre / ${prefix}black / ${prefix}mining`,
         `${prefix}katil / ${prefix}tumkatil / ${prefix}karakter ayarla`,
         `${prefix}admin / ${prefix}prefix / ${prefix}istatistik`,
+        `${prefix}numara — çoklu WhatsApp numarası`,
         `${prefix}lisans — lisans durumu`,
       ].join('\n');
+      break;
+    }
+    case 'numara': {
+      const active = getActiveNumber(state);
+      reply = [
+        '*📱 Numara Menü*',
+        `${prefix}numara-liste`,
+        `${prefix}numara-ekle (isim) (idInstance) (apiToken)`,
+        `${prefix}numara-aktif (no|isim)`,
+        `${prefix}numara-sil (no|isim)`,
+        `${prefix}numara-yenile — aktif numaranın wid bilgisini yenile`,
+        '',
+        `Kayıtlı: ${state.numbers.length}`,
+        `Aktif: ${active ? (active.name + ' / ' + active.instanceId) : '-'}`,
+        `Bu mesajın geldiği instance: ${incomingInstance || '-'}`,
+      ].join('\n');
+      break;
+    }
+    case 'numara-liste': {
+      if (!state.numbers.length) { reply = 'Kayıtlı numara yok. .env veya !numara-ekle ile ekle.'; break; }
+      reply = ['*📱 Numaralar*', ...state.numbers.map((n, i) => formatNumberLine(n, i, state.activeNumberId))].join('\n');
+      break;
+    }
+    case 'numara-ekle': {
+      const bits = String(args || '').trim().split(/\s+/).filter(Boolean);
+      if (bits.length < 3) {
+        reply = `Kullanım: ${prefix}numara-ekle Bot2 1101xxxx tokenxxxx`;
+        break;
+      }
+      const apiToken = bits[bits.length - 1];
+      const instanceId = bits[bits.length - 2];
+      const name = bits.slice(0, -2).join(' ') || ('Bot' + (state.numbers.length + 1));
+      if (!/^\d+$/.test(instanceId) || apiToken.length < 10) {
+        reply = 'idInstance sayı, apiToken uzun olmalı.';
+        break;
+      }
+      if (state.numbers.some((n) => String(n.instanceId) === instanceId)) {
+        reply = 'Bu instance zaten kayıtlı.';
+        break;
+      }
+      const row = {
+        id: 'n-' + Date.now().toString(36),
+        name,
+        instanceId,
+        apiToken,
+        wid: '',
+        addedAt: Date.now(),
+      };
+      const prev = { ...CURRENT_CREDS };
+      setCredsFromNumber(row);
+      try {
+        const st = await api.call(this, 'GET', 'getStateInstance');
+        const settings = await api.call(this, 'GET', 'getSettings');
+        row.wid = settings.wid || settings.phone || '';
+        state.numbers.push(row);
+        if (!state.activeNumberId) state.activeNumberId = row.id;
+        reply = [
+          '✅ Numara eklendi',
+          `İsim: ${name}`,
+          `Instance: ${instanceId}`,
+          `State: ${st.stateInstance || '?'}`,
+          `Wid: ${row.wid || '-'}`,
+          '',
+          `Aktif yapmak için: ${prefix}numara-aktif ${state.numbers.length}`,
+          'Not: Bu instance’ın Green API webhook’u da aynı Ototext adresine bakmalı.',
+        ].join('\n');
+      } catch (e) {
+        reply = `Eklenemedi (API kontrol): ${e.message || e}`;
+      } finally {
+        CURRENT_CREDS = prev;
+        if (sessionNumber) setCredsFromNumber(sessionNumber);
+      }
+      break;
+    }
+    case 'numara-aktif': {
+      const n = getNumberByRef(state, args);
+      if (!n) { reply = `Kullanım: ${prefix}numara-aktif 1`; break; }
+      state.activeNumberId = n.id;
+      setCredsFromNumber(n);
+      sessionNumber = n;
+      if (n.wid) state.botWid = n.wid;
+      reply = `✅ Aktif numara: ${n.name}\nInstance: ${n.instanceId}\nYayın/DM/mining bu numaradan gider.`;
+      break;
+    }
+    case 'numara-sil': {
+      const n = getNumberByRef(state, args);
+      if (!n) { reply = `Kullanım: ${prefix}numara-sil 2`; break; }
+      if (state.numbers.length <= 1) { reply = 'En az 1 numara kalmalı.'; break; }
+      state.numbers = state.numbers.filter((x) => x.id !== n.id);
+      if (state.activeNumberId === n.id) state.activeNumberId = state.numbers[0].id;
+      reply = `🗑 Silindi: ${n.name}\nAktif: ${getActiveNumber(state)?.name || '-'}`;
+      break;
+    }
+    case 'numara-yenile': {
+      const n = getActiveNumber(state);
+      if (!n) { reply = 'Aktif numara yok.'; break; }
+      setCredsFromNumber(n);
+      try {
+        const settings = await api.call(this, 'GET', 'getSettings');
+        const st = await api.call(this, 'GET', 'getStateInstance');
+        n.wid = settings.wid || settings.phone || n.wid || '';
+        state.botWid = n.wid;
+        reply = `🔄 Yenilendi\n${n.name}\nWid: ${n.wid || '-'}\nState: ${st.stateInstance || '?'}`;
+      } catch (e) {
+        reply = `Yenilenemedi: ${e.message || e}`;
+      }
       break;
     }
     case 'lisans': {
@@ -951,6 +1157,7 @@ try {
 
     case 'istatistik': {
       const s = state.stats;
+      const active = getActiveNumber(state);
       reply = [
         '*📊 Ototext İstatistik*',
         `Komutlar: ${s.commands}`,
@@ -959,6 +1166,7 @@ try {
         `Katılma: ${s.joins}`,
         `Blacklist: ${state.blacklist.length}`,
         `Davet kaydı: ${state.invites.length}`,
+        `Numaralar: ${state.numbers.length} | aktif: ${active ? active.name : '-'}`,
         `Yayın: ${state.broadcast.running ? 'ON' : 'OFF'}`,
         `DM: ${state.dm.running ? 'ON' : 'OFF'}`,
         `Mining: ${state.mining.running ? 'ON' : 'OFF'}`,
@@ -973,7 +1181,16 @@ try {
 }
 
 saveState(state);
-return [{ json: { chatId, reply, command, sender } }];
+return [{
+  json: {
+    chatId,
+    reply,
+    command,
+    sender,
+    instanceId: CURRENT_CREDS.instanceId,
+    apiToken: CURRENT_CREDS.apiToken,
+  },
+}];
 '''.replace('__STATE_PATH__', STATE_PATH)
 
 WORKER_JS = r'''
@@ -988,9 +1205,25 @@ function saveState(state) {
   fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 }
 
+let stateRef = null;
+
+function getActiveNumber(state) {
+  const nums = Array.isArray(state.numbers) ? state.numbers : [];
+  let n = nums.find((x) => x.id === state.activeNumberId);
+  if (!n) n = nums[0];
+  if (n) return n;
+  const envId = String($env.ID_INSTANCE || '');
+  const envTok = String($env.API_TOKEN || '');
+  if (envId && envTok && envId !== 'YOUR_INSTANCE_ID') {
+    return { id: 'env', name: 'Ana', instanceId: envId, apiToken: envTok };
+  }
+  return null;
+}
+
 async function api(method, endpoint, body) {
-  const instance = $env.ID_INSTANCE;
-  const token = $env.API_TOKEN;
+  const active = getActiveNumber(stateRef || {});
+  const instance = active ? active.instanceId : $env.ID_INSTANCE;
+  const token = active ? active.apiToken : $env.API_TOKEN;
   if (!instance || !token || instance === 'YOUR_INSTANCE_ID') {
     throw new Error('missing credentials');
   }
@@ -1045,9 +1278,13 @@ async function pushLog(state, type, message) {
 
 const state = loadState();
 if (!state) return [];
+stateRef = state;
+if (!Array.isArray(state.numbers)) state.numbers = [];
 const logs = [];
 const now = Date.now();
 ensureDaily(state);
+const activeNum = getActiveNumber(state);
+if (activeNum) logs.push(`activeNumber=${activeNum.name || activeNum.instanceId}`);
 
 // --- Broadcast worker ---
 if (state.broadcast?.running && state.broadcast.text) {
@@ -1270,7 +1507,7 @@ def wf_command():
             {
                 "parameters": {
                     "method": "POST",
-                    "url": "=https://api.green-api.com/waInstance{{ $env.ID_INSTANCE }}/sendMessage/{{ $env.API_TOKEN }}",
+                    "url": "=https://api.green-api.com/waInstance{{ $json.instanceId || $env.ID_INSTANCE }}/sendMessage/{{ $json.apiToken || $env.API_TOKEN }}",
                     "sendBody": True,
                     "specifyBody": "json",
                     "jsonBody": "={{ JSON.stringify({ chatId: $json.chatId, message: $json.reply }) }}",

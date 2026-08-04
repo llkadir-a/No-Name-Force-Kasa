@@ -34,6 +34,9 @@ WhatsApp bot — `!` prefix komutlarla yönetilir. Bot numarası otomatik admind
 | `!prefix-cikar (p)` / `!prefix cikar (p)` | Prefix çıkar |
 | `!istatistik` | Genel istatistik |
 | `!lisans` | Lisans durumu |
+| `!numara` | Çoklu WhatsApp numarası menüsü |
+| `!numara-ekle (isim) (id) (token)` | Yeni bot numarası ekle |
+| `!numara-liste` / `!numara-aktif N` / `!numara-sil N` | Listele / aktif yap / sil |
 
 Sadece adminler kullanabilir. Bot’un kendi numarası otomatik admin.
 
