@@ -52,8 +52,10 @@ function defaultState() {
       stickerWindowMs: 15000,
       kickOnCall: true,
       kickOnStickerSpam: true,
+      lockOnIncident: true,
       protectAdmins: true,
       stickerHits: {},
+      lockedGroups: {},
     },
     daily: { dayKey: '', broadcastSent: 0, dmSent: 0, errors: 0, starts: 0, stops: 0, events: [] },
     stats: { commands: 0, broadcastSent: 0, dmSent: 0, joins: 0, startedAt: Date.now() },
@@ -93,11 +95,15 @@ function ensureState() {
     stickerWindowMs: 15000,
     kickOnCall: true,
     kickOnStickerSpam: true,
+    lockOnIncident: true,
     protectAdmins: true,
     stickerHits: {},
+    lockedGroups: {},
   }, s.guard || {});
   if (!s.guard.groups || typeof s.guard.groups !== 'object') s.guard.groups = {};
   if (!s.guard.stickerHits || typeof s.guard.stickerHits !== 'object') s.guard.stickerHits = {};
+  if (!s.guard.lockedGroups || typeof s.guard.lockedGroups !== 'object') s.guard.lockedGroups = {};
+  if (typeof s.guard.lockOnIncident !== 'boolean') s.guard.lockOnIncident = true;
   ensureNumbers(s);
   return s;
 }
@@ -186,6 +192,36 @@ async function guardKick(state, groupId, participantId, reason) {
   }
 }
 
+async function guardSetMembersCanWrite(state, groupId, allow) {
+  if (!groupId || !String(groupId).endsWith('@g.us')) return { ok: false, error: 'grup yok' };
+  try {
+    const res = await api.call(this, 'POST', 'updateGroupSettings', {
+      groupId,
+      allowParticipantsSendMessages: !!allow,
+    });
+    const ok = !!(res && res.updateGroupSettings);
+    if (!state.guard.lockedGroups || typeof state.guard.lockedGroups !== 'object') state.guard.lockedGroups = {};
+    if (allow) delete state.guard.lockedGroups[groupId];
+    else state.guard.lockedGroups[groupId] = { at: Date.now(), by: 'guard' };
+    await pushLog.call(
+      this,
+      state,
+      'guard',
+      `Group ${allow ? 'UNLOCK' : 'LOCK'} ${groupId} | ok=${ok} | ${res?.reason || ''}`,
+    );
+    return { ok, res };
+  } catch (e) {
+    await pushLog.call(this, state, 'error', `Guard lock fail: ${e.message || e}`);
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function guardLockAfterIncident(state, groupId, reason) {
+  if (!state.guard?.lockOnIncident) return { ok: false, skipped: true };
+  const lock = await guardSetMembersCanWrite.call(this, state, groupId, false);
+  return { ...lock, reason };
+}
+
 async function handleGuardSticker(state, body) {
   const g = state.guard;
   if (!g.kickOnStickerSpam) return null;
@@ -208,11 +244,14 @@ async function handleGuardSticker(state, body) {
   if (hits.length < limit) return null;
   g.stickerHits[key] = [];
   const kicked = await guardKick.call(this, state, chatId, sender, `sticker-spam x${hits.length}/${windowMs}ms`);
-  if (!kicked.ok) return null;
-  return {
-    chatId,
-    reply: `🛡️ Guard: sticker spam — çıkarıldı\n${normId(sender)}`,
-  };
+  const locked = await guardLockAfterIncident.call(this, state, chatId, 'sticker-spam');
+  const lines = [`🛡️ Guard: sticker spam`];
+  if (kicked.ok) lines.push(`Çıkarıldı: ${normId(sender)}`);
+  else lines.push(`Kick: ${kicked.error || 'olmadı'}`);
+  if (locked.ok) lines.push('Sohbet kilitlendi — sadece adminler yazabilir.');
+  else if (!locked.skipped) lines.push(`Kilit: ${locked.error || locked.res?.reason || 'olmadı'}`);
+  lines.push(`Açmak için: ${(state.mainPrefix || '!')}guard yaz`);
+  return { chatId, reply: lines.join('\n') };
 }
 
 async function handleGuardCall(state, body) {
@@ -222,26 +261,39 @@ async function handleGuardCall(state, body) {
   if (status && status !== 'offer') return null;
   const from = normId(body.from || body.senderData?.sender || '');
   const chatId = body.chatId || body.senderData?.chatId || body.idGroup || '';
-  // Grup araması: chatId grup ise o gruptan at
+  // Grup araması: chatId grup ise o gruptan at + kilitle
   if (chatId && String(chatId).endsWith('@g.us') && guardApplies(state, chatId)) {
     const kicked = await guardKick.call(this, state, chatId, from, 'group-call');
-    if (!kicked.ok) return null;
-    return { chatId, reply: `🛡️ Guard: grup araması — çıkarıldı\n${from}` };
+    const locked = await guardLockAfterIncident.call(this, state, chatId, 'group-call');
+    const lines = ['🛡️ Guard: grup araması'];
+    if (kicked.ok) lines.push(`Çıkarıldı: ${from}`);
+    else lines.push(`Kick: ${kicked.error || 'olmadı'}`);
+    if (locked.ok) lines.push('Sohbet kilitlendi — sadece adminler yazabilir.');
+    else if (!locked.skipped) lines.push(`Kilit: ${locked.error || locked.res?.reason || 'olmadı'}`);
+    lines.push(`Açmak için: ${(state.mainPrefix || '!')}guard yaz`);
+    if (!kicked.ok && !locked.ok) return null;
+    return { chatId, reply: lines.join('\n') };
   }
   // Bazı webhook'larda sadece arayan gelir: korumalı gruplarda bu kişiyi ara
   if (!from) return null;
   const targets = Object.keys(g.groups || {}).filter((id) => g.groups[id]);
   const groupIds = targets.length ? targets : [];
-  // spesifik grup listesi yoksa güvenli taraf: sadece bilinen guarded gruplar
   if (!groupIds.length) return null;
-  const replies = [];
+  let first = null;
   for (const gid of groupIds) {
     if (!guardApplies(state, gid)) continue;
     const kicked = await guardKick.call(this, state, gid, from, 'call-offer');
-    if (kicked.ok) replies.push(gid);
+    const locked = await guardLockAfterIncident.call(this, state, gid, 'call-offer');
+    if (kicked.ok || locked.ok) {
+      first = { chatId: gid, kicked, locked };
+      break;
+    }
   }
-  if (!replies.length) return null;
-  return { chatId: replies[0], reply: `🛡️ Guard: arama — çıkarıldı\n${from}` };
+  if (!first) return null;
+  const lines = ['🛡️ Guard: arama', `Çıkarıldı/kilit: ${from}`];
+  if (first.locked.ok) lines.push('Sohbet kilitlendi — sadece adminler yazabilir.');
+  lines.push(`Açmak için: ${(state.mainPrefix || '!')}guard yaz`);
+  return { chatId: first.chatId, reply: lines.join('\n') };
 }
 
 function normalizePrefix(raw) {
@@ -548,12 +600,17 @@ if (body.typeWebhook === 'incomingMessageReceived') {
     const sender = body.senderData?.sender || '';
     if (guardApplies(state, chatId)) {
       const kicked = await guardKick.call(this, state, chatId, sender, 'call-message');
+      const locked = await guardLockAfterIncident.call(this, state, chatId, 'call-message');
       saveState(state);
-      if (kicked.ok) {
+      if (kicked.ok || locked.ok) {
+        const lines = ['🛡️ Guard: grup araması'];
+        if (kicked.ok) lines.push(`Çıkarıldı: ${normId(sender)}`);
+        if (locked.ok) lines.push('Sohbet kilitlendi — sadece adminler yazabilir.');
+        lines.push(`Açmak için: ${(state.mainPrefix || '!')}guard yaz`);
         return [{
           json: {
             chatId,
-            reply: `🛡️ Guard: grup araması — çıkarıldı\n${normId(sender)}`,
+            reply: lines.join('\n'),
             instanceId: CURRENT_CREDS.instanceId,
             apiToken: CURRENT_CREDS.apiToken,
           },
@@ -606,7 +663,7 @@ if (command === 'numara' && args) {
 }
 if (command === 'guard' && args) {
   const a0 = (args.split(/\s+/)[0] || '').toLowerCase();
-  if (['ac', 'aç', 'kapat', 'liste', 'sticker', 'grup', 'durum'].includes(a0)) {
+  if (['ac', 'aç', 'kapat', 'liste', 'sticker', 'grup', 'durum', 'yaz', 'kilit'].includes(a0)) {
     command = 'guard-' + (a0 === 'aç' ? 'ac' : a0);
     args = args.slice(a0.length).trim();
   }
@@ -660,6 +717,7 @@ try {
     case 'guard': {
       const g = state.guard;
       const gcount = Object.keys(g.groups || {}).filter((k) => g.groups[k]).length;
+      const lockedN = Object.keys(g.lockedGroups || {}).length;
       reply = [
         '*🛡️ Guard Menü*',
         `${prefix}guard ac — tüm admin olduğun gruplarda aç`,
@@ -668,14 +726,38 @@ try {
         `${prefix}guard grup kapat — bu grubu çıkar`,
         `${prefix}guard liste — korunan gruplar`,
         `${prefix}guard sticker 4 — sticker spam limiti`,
+        `${prefix}guard yaz — bu sohbeti tekrar aç (herkes yazabilir)`,
+        `${prefix}guard kilit — bu sohbeti kilitle (sadece admin)`,
         '',
         `Durum: ${g.enabled ? 'AÇIK' : 'KAPALI'}`,
         `Sticker spam kick: ${g.kickOnStickerSpam ? 'on' : 'off'} (limit ${g.stickerLimit}/${Math.round((g.stickerWindowMs||15000)/1000)}sn)`,
         `Arama kick: ${g.kickOnCall ? 'on' : 'off'}`,
+        `Olayda otomatik kilit: ${g.lockOnIncident ? 'on' : 'off'}`,
+        `Şu an kilitli: ${lockedN}`,
         `Özel grup listesi: ${gcount ? gcount + ' grup' : 'yok (tüm gruplar)'}`,
         '',
-        'Bot o grupta admin olmalı; değilse kick çalışmaz.',
+        'Spam/arama olunca: kick + sohbet kilit (sadece admin yazar).',
       ].join('\n');
+      break;
+    }
+    case 'guard-yaz': {
+      let gid = (args || '').trim().replace(/[()]/g, '');
+      if (!gid && String(chatId).endsWith('@g.us')) gid = chatId;
+      if (!gid.endsWith('@g.us')) { reply = `Grupta yaz: ${prefix}guard yaz`; break; }
+      const r = await guardSetMembersCanWrite.call(this, state, gid, true);
+      reply = r.ok
+        ? `🔓 Sohbet açıldı — herkes yazabilir.\n${gid}`
+        : `Açılamadı: ${r.error || r.res?.reason || 'bilinmeyen'} (bot admin mi?)`;
+      break;
+    }
+    case 'guard-kilit': {
+      let gid = (args || '').trim().replace(/[()]/g, '');
+      if (!gid && String(chatId).endsWith('@g.us')) gid = chatId;
+      if (!gid.endsWith('@g.us')) { reply = `Grupta yaz: ${prefix}guard kilit`; break; }
+      const r = await guardSetMembersCanWrite.call(this, state, gid, false);
+      reply = r.ok
+        ? `🔒 Sohbet kilitlendi — sadece adminler yazabilir.\n${gid}`
+        : `Kilitlenemedi: ${r.error || r.res?.reason || 'bilinmeyen'} (bot admin mi?)`;
       break;
     }
     case 'guard-ac': {

@@ -67,8 +67,10 @@
     "stickerWindowMs": 15000,
     "kickOnCall": true,
     "kickOnStickerSpam": true,
+    "lockOnIncident": true,
     "protectAdmins": true,
-    "stickerHits": {}
+    "stickerHits": {},
+    "lockedGroups": {}
   },
   "daily": {
     "dayKey": "",
